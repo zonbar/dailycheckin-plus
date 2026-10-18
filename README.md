@@ -1,7 +1,5 @@
 # dailycheckin-plus
 
-<p align="center"><a href="README_EN.md">English</a> ｜ 简体中文</p>
-
 **给 [Sitoi/dailycheckin](https://github.com/Sitoi/dailycheckin) 加了一个网页管理后台。一条 `docker compose up -d` 跑起来，浏览器里点几下就配好了。**
 
 [![build](https://github.com/BeacherZ/dailycheckin-plus/actions/workflows/build.yml/badge.svg)](https://github.com/BeacherZ/dailycheckin-plus/actions/workflows/build.yml)
