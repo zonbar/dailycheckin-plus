@@ -184,10 +184,13 @@ def parse() -> dict:
     # 别每次 /api/state 都重新算一遍：`0 0 31 2 *` 这种「永远不会命中」的表达式
     # 要扫满一年（50 多万次），轮询会把它放大成卡顿。算过一次就记在内存里。
     next_at = data.get("next_run_at") or 0
-    if data["enabled"] and not next_at:
+    if data["enabled"] and (not next_at or (next_at <= time.time() and not _IN_RUN)):
+        # 计划时间已经过去（容器停机错过了点）时，页面不该继续显示过去的时刻，
+        # 但这里**只改展示值，绝不写回 data** —— 「已经过期」正是 _tick 判断
+        # 「该补跑一次」的唯一依据，被 /api/state 顺手擦掉就永远不补跑了
+        # （页面开着反而让它不执行，最坏的一种 bug）。
         try:
             next_at = next_run(data["cron"], time.time())
-            data["next_run_at"] = next_at
         except ValueError:
             next_at = 0
     return {
@@ -348,8 +351,17 @@ def run_once(notify: bool = True) -> dict:
             return {"ok": False, "message": "上一轮校验还没结束"}
         _IN_RUN = True
     try:
-        summary = runner.verify_all(auto=True)
         now = time.time()
+        with _LOCK:
+            # 先把「下次」推到新周期再开跑：一轮可能要几分钟，这期间 tick 每 20 秒
+            # 都会看到同一个「已经到点」的时间，页面也会显示过去的时刻。
+            data = _load()
+            try:
+                data["next_run_at"] = (next_run(data["cron"], now) if data["enabled"] else 0) or data["next_run_at"]
+            except ValueError:
+                pass
+            _save()
+        summary = runner.verify_all(auto=True)
         invalid = summary.get("invalid") or []
         notice = {"sent": False, "message": "没有失效站点"}
         if invalid and notify:
@@ -368,7 +380,8 @@ def run_once(notify: bool = True) -> dict:
                 "notified": bool(notice.get("sent")),
                 "notice": notice.get("message", ""),
             }
-            data["next_run_at"] = next_run(data["cron"], now) if data["enabled"] else 0
+            # 这里**不再**动 next_run_at：开头已经推好一轮，跑完再按「开始的时刻」算一次
+            # 反而可能算出刚跑过的那个点（校验耗时跨过周期时），parse() 也会兜底纠正。
             _save()
         return {"ok": True, "summary": summary, "notice": notice}
     finally:

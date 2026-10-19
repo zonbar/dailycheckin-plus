@@ -196,6 +196,35 @@ check("永远命不中的 cron 也拒绝（别让人以为开了）",
       raises(lambda: autoverify.set_config(True, "0 0 31 2 *", True)))
 check("关掉后下次时间归零", autoverify.set_config(False, "0 */12 * * *", True)["next_run_at"] == 0)
 
+# --------------------------------------------------------------------------- #
+print("\n5) 错过时间点（容器停机）：显示下一轮，但不能把「该补跑」的信号擦掉")
+
+past = time.time() - 6 * 3600
+set_state(enabled=True, cron="0 3 * * *", next_run_at=past, last_run_at=0, notify=False)
+autoverify._save()
+snap = autoverify.parse()
+disk = json.load(open(paths.VERIFY_PATH, encoding="utf-8"))
+check("过期时页面不再显示过去的时刻", snap["next_run_at"] > time.time(), snap["next_run_at"])
+check("parse 只改展示、不改落盘（否则页面一刷新就不补跑了）",
+      abs(disk["next_run_at"] - past) < 1, disk["next_run_at"])
+
+calls = []
+
+
+def tick_verify_all(**kw):
+    calls.append(1)
+    return {"valid": [], "invalid": [], "unknown": [], "skipped": []}
+
+
+runner.verify_all = tick_verify_all
+autoverify._tick()
+check("tick 发现过期 → 补跑一次", len(calls) == 1, calls)
+check("补跑后写上了「上次」时间", autoverify._STATE.get("last_run_at", 0) > 0,
+      autoverify._STATE.get("last_run_at"))
+check("补跑后「下次」推到未来（跑的过程中也不会又显示过去）",
+      autoverify._STATE.get("next_run_at", 0) > time.time(),
+      autoverify._STATE.get("next_run_at"))
+
 print("=" * 66)
 print(f"通过 {len(passed)}  失败 {len(failed)}")
 for one in failed:

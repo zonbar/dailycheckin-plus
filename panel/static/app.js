@@ -1003,8 +1003,20 @@
   function verifyTip(vs) {
     if (!vs || !vs.enabled) return "已关闭。打开后按 cron 定期在线校验已配置站点，全部有效时不打扰你。";
     const short = (ts) => (ts ? fmtTime(ts).slice(5, 16) : "—");
+    // 相对时间按时间戳直接算，不受浏览器时区影响：开着代理/改过时区的浏览器
+    // 会把 fmtTime 的绝对时间显示成另一个钟点，光看「18:00」容易误判成「算错了」。
+    const until = (ts) => {
+      if (!ts) return "";
+      const s = ts - Date.now() / 1000;
+      if (s <= 0) return "（已到点，马上执行）";
+      if (s < 60) return "（不到 1 分钟）";
+      if (s < 3600) return `（还有 ${Math.floor(s / 60)} 分钟）`;
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return m ? `（还有 ${h} 小时 ${m} 分）` : `（还有 ${h} 小时）`;
+    };
     const last = vs.last_run_at ? `上次 ${short(vs.last_run_at)}` : "还没跑过";
-    const next = vs.next_run_at && vs.next_run_at * 1000 <= Date.now() ? "即将执行" : short(vs.next_run_at);
+    const next = `${short(vs.next_run_at)}${until(vs.next_run_at)}`;
     const bad = (vs.last_result && (vs.last_result.invalid || []).length) || 0;
     const err = vs.last_error ? `｜出错：${vs.last_error}` : "";
     return `${last}${bad ? `（${bad} 个站点失效）` : ""} ｜ 下次 ${next} —— 只校验已配置且有在线接口的站点；全部有效时静默；同一批失效每 ${vs.remind_after_hours || 24} 小时最多提醒一次。${err}`;
