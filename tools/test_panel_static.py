@@ -233,6 +233,14 @@ check("结论文案是短句（细节挂 title）",
       "有新版本（${remote.short" in js and "已是最新（${info.short}）" in js
       and "`判断不了${remote.short" in js)
 check("有新版本时给出更新命令", "docker compose pull" in js)
+# 小白最常见的坑：在 root 家目录直接跑 compose → no configuration file provided
+# （家目录里若有别的 compose，更糟：会把那个项目拉起来）。命令必须自己跳到 compose 目录。
+check("更新命令自己定位 compose 目录（任意目录粘贴都能用）",
+      "com.docker.compose.project.working_dir" in js and "docker inspect" in js)
+check("命令是一行 pre 块（可整条选中、折行会变成两条命令）",
+      'class="cmd" id="aboutCmd"' in html and "white-space: pre;" in css)
+check("命令块只在新版本时摊出来",
+      'info.ok === true && info.needs_update === true' in js and 'cmdEl.hidden = !showCmd' in js)
 check("简版的 /api/state 不会把已查到的结论抹掉", "info.checked_at === undefined" in js)
 
 print("10) 更新检查的后端契约（离线，只读源码）")

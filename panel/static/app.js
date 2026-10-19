@@ -912,6 +912,15 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
 
+  /* 有新版本时给出的更新命令。第一行不是多余：compose 按**当前目录**找
+     docker-compose.yml，在 root 家目录直接跑会报「no configuration file provided」，
+     家目录里要是有别的 compose 文件更糟 —— 会把那个项目拉起来。
+     这行先问容器「当初是用哪个目录的 compose 起我的」，第二行再跳过去更新；
+     两行一起粘贴到终端就行（container_name 固定是 dailycheckin）。 */
+  const UPDATE_CMD =
+    "D=$(docker inspect -f '{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}' dailycheckin)\n" +
+    'cd "$D" && docker compose pull && docker compose up -d';
+
   /* 画「项目地址 + 更新状态」。只有设置页最下方的「关于本项目」用得到 ——
      首页那处右下角小牌已经删掉，别再加回来。
      结论只有四种，别再自己发明第五种：
@@ -948,8 +957,8 @@
       if (info.needs_update === true) {
         dot = "warn";
         text = `有新版本（${remote.short || "远端有新提交"}）`;
-        brief = "更新命令：docker compose pull && docker compose up -d";
-        tip = `远端最新提交：${remote.message || remote.short}${remote.date ? "　" + fmtDay(remote.date) : ""}\n${brief}`;
+        brief = "两行一起复制粘贴就能更新 —— 第一行会问出 compose 文件在哪个目录，不用自己找路径。";
+        tip = `远端最新提交：${remote.message || remote.short}${remote.date ? "　" + fmtDay(remote.date) : ""}\n${UPDATE_CMD}`;
       } else if (info.needs_update === false) {
         dot = "ok";
         text = `已是最新（${info.short}）`;
@@ -977,6 +986,13 @@
     if (aboutTip) {
       // 设成 textContent 而不是 innerHTML：这里可能带远端提交信息（外部内容）。
       aboutTip.textContent = brief || "判断依据是构建这个镜像时的那次提交，跟 GitHub 上 main 的最新提交比。";
+    }
+    // 只有「确实有新版本」才把命令摊出来：别的状态下这条命令会让人以为非要更新不可。
+    const cmdEl = $("aboutCmd");
+    if (cmdEl) {
+      const showCmd = info.ok === true && info.needs_update === true;
+      cmdEl.hidden = !showCmd;
+      cmdEl.textContent = showCmd ? UPDATE_CMD : "";
     }
   }
 

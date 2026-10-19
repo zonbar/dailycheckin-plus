@@ -49,8 +49,14 @@ docker compose up -d
 
 浏览器打开 `http://你的地址:8080`，第一次会引导你设置后台账号密码。
 
-**升级**：`docker compose pull && docker compose up -d`。
-设置页最下方的「关于本项目」显示当前构建的提交，并跟 GitHub 上 `main` 的最新提交比对 —— 有新提交就标出来，鼠标悬停能看到更新命令。
+**升级**：两行一起复制粘贴，在**任意目录**跑都行 —— 第一行先从容器标签里问出 compose 文件在哪，第二行再跳过去更新：
+
+```bash
+D=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' dailycheckin)
+cd "$D" && docker compose pull && docker compose up -d
+```
+
+已经在 compose 目录里的话，只跑 `docker compose pull && docker compose up -d` 就够。设置页最下方的「关于本项目」显示当前构建的提交，并跟 GitHub 上 `main` 的最新提交比对 —— 有新提交就把上面这两行摊出来（点一下可整段选中复制）。
 
 不用 compose 的话，拿同一个镜像挂上这**四个目录**用 `docker run` 起也行；Windows 把 `$PWD` 换成 `${PWD}`，群晖 / 威联通把上面这段贴进 Container Manager / Container Station 的「项目」。
 
@@ -154,7 +160,7 @@ python tools/sync_upstream.py --ref 25.12.9   # 指定 tag / 分支 / commit
 
 它会下载上游源码、替换 `dailycheckin/`、**重放 `patches/` 里的本地补丁**、更新 `UPSTREAM.json`，并报告站点增减。补丁打不上就整体回滚，绝不留下改了一半的引擎 —— 所以**别手工把上游目录盖过来**，那会悄悄抹掉补丁。仓库 **Actions → sync upstream → Run workflow** 也能点一下自动同步并重建镜像。
 
-**同步完仓库不等于容器换了新引擎**：容器用的是镜像，得再 `docker compose pull && docker compose up -d`。想知道自己这台跑的是哪版，看设置页「关于本项目」的构建提交。
+**同步完仓库不等于容器换了新引擎**：容器用的是镜像，得再按上面「升级」那条命令更新一次。想知道自己这台跑的是哪版，看设置页「关于本项目」的构建提交。
 
 两个本地补丁：`0001` 修 B 站分区接口（上游接口下线导致 `AttributeError`，已提 [PR #592](https://github.com/Sitoi/dailycheckin/pull/592)，上游合并后删掉即可）、`0002` 把通知改成恒定一条。
 
@@ -170,6 +176,9 @@ python tools/sync_upstream.py --ref 25.12.9   # 指定 tag / 分支 / commit
 
 **校验显示「无法判定」是不是 cookie 坏了？**
 不一定。网络不通、接口改版、被风控都会这样，面板宁可不确定也不误报失效。这种情况点「立即签到」：**报错了一定有问题，没报错也不能证明有效**。
+
+**在 root 目录直接跑 `docker compose pull` 报 `no configuration file provided`？**
+compose 只认**当前目录**里的 `docker-compose.yml`。用上面「升级」那两行（会自己定位目录），或者先 `cd` 到放 compose 的目录。不知道自己项目在哪，跑 `docker compose ls` —— 它会把每个项目用的配置文件路径列出来。
 
 ## 本地开发
 
