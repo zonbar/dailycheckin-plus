@@ -1,0 +1,39 @@
+# 切换到 zonbar/dailycheckin-plus 自己的镜像（内含微博超话签到）
+#
+# 与旧版 docker-compose.yml 的唯一区别是 image 一行：
+#   ghcr.io/beacherz/dailycheckin-plus:latest   （上游 BeacherZ）
+# → ghcr.io/zonbar/dailycheckin-plus:latest     （你的 fork）
+#
+# 数据卷（config / logs / data / cron）路径完全没变，
+# 所以旧容器的 cookie、定时任务、后台账号都会原样带过来，不用重新配。
+#
+# 用法：
+#   docker compose pull && docker compose up -d
+#
+# 换回上游：把下面 image 改回 ghcr.io/beacherz/dailycheckin-plus:latest 即可。
+
+services:
+  dailycheckin:
+    image: ghcr.io/zonbar/dailycheckin-plus:latest
+    container_name: dailycheckin
+    restart: unless-stopped
+    ports:
+      - 8080:8080
+    volumes:
+      - ./config:/dailycheckin/config
+      - ./logs:/dailycheckin/logs
+      - ./data:/dailycheckin/data
+      - ./cron:/dailycheckin/cron
+    environment:
+      - TZ=Asia/Shanghai
+      # - PANEL_PORT=8080                 # 容器内监听端口，改这里要同步改上面的映射
+      # - PANEL_TITLE=签到管理面板
+      # - PANEL_USERNAME=admin            # 想跳过「首次打开手动设置」，就用这两个直接建号
+      # - PANEL_PASSWORD=改成你自己的密码
+      # - PANEL_TOKEN=                    # 可选脚本口令，给 curl / 自动化用，不能替代登录
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PANEL_PORT','8080')+'/api/health',timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      start_period: 15s
+      retries: 3

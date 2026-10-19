@@ -1,0 +1,44 @@
+# 从你的仓库源码本地构建（不依赖 ghcr.io 镜像，也不依赖 Actions 是否跑完）
+#
+# 什么时候用这个：
+#   * Actions 没开/没跑完，ghcr.io/zonbar/dailycheckin-plus:latest 还不存在
+#   * 不想等 CI，或者想在本地改完直接验证
+#
+# 用法（先 clone 你的仓库，再在这个目录里执行）：
+#   git clone https://github.com/zonbar/dailycheckin-plus.git
+#   cd dailycheckin-plus
+#   docker compose -f docker-compose.local.yml up -d --build
+#
+# 注意：数据卷路径与 docker-compose.yml 一致，
+# 如果之前是把 compose 放在别的目录运行，这里要保证 ./config 等指向同一批数据，
+# 否则会像"换了个空面板"。可用 PANEL_DATA_DIR 之类的方式对齐，见文件末尾注释。
+
+services:
+  dailycheckin:
+    build:
+      context: .
+      # 让设置页「关于本项目」显示正确的提交号
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-local}
+    image: dailycheckin-plus:zonbar
+    container_name: dailycheckin
+    restart: unless-stopped
+    ports:
+      - 8080:8080
+    volumes:
+      - ./config:/dailycheckin/config
+      - ./logs:/dailycheckin/logs
+      - ./data:/dailycheckin/data
+      - ./cron:/dailycheckin/cron
+    environment:
+      - TZ=Asia/Shanghai
+      # - PANEL_PORT=8080
+      # - PANEL_TITLE=签到管理面板
+      # - PANEL_USERNAME=admin
+      # - PANEL_PASSWORD=改成你自己的密码
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PANEL_PORT','8080')+'/api/health',timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      start_period: 15s
+      retries: 3
