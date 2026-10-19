@@ -372,13 +372,28 @@ def start_verify(site_keys: list[str] | None = None) -> dict:
     return {"id": run["id"]}
 
 
-def _do_verify(run: dict, site_keys: list[str]) -> None:
+def verify_all(*, auto: bool = False) -> dict:
+    """**同步**跑一遍「全部已配置站点」，返回汇总。
+
+    定时校验用它：需要拿到「哪些站点失效」再决定要不要通知，
+    只丢回一个 run id 没法判断。`auto=True` 时运行记录会标成定时触发，
+    面板的运行日志里能区分「我点的」和「它自己跑的」。
+    """
+    run = _new_run("verify", [])
+    if auto:
+        with _LOCK:
+            run["auto"] = True
+    return _do_verify(run, [])
+
+
+def _do_verify(run: dict, site_keys: list[str]) -> dict:
+    summary = {"valid": [], "invalid": [], "unknown": [], "skipped": []}
     try:
         data = store.load()
     except Exception as exc:  # noqa: BLE001
         _append(run, f"[面板] 读取配置失败：{exc}")
         _finish(run, "failed", 1)
-        return
+        return summary
 
     metas = {one["key"]: one for one in catalog.all_sites()}
     targets = site_keys or [one["key"] for one in catalog.all_sites()]
@@ -387,10 +402,12 @@ def _do_verify(run: dict, site_keys: list[str]) -> None:
         accounts = store.accounts(data, key)
         if not accounts:
             _append(run, f"「{meta['label']}」未配置，跳过")
+            summary["skipped"].append({"key": key, "label": meta["label"], "reason": "未配置"})
             continue
         if not meta.get("verify"):
             _append(run, f"「{meta['label']}」没有公开登录态接口，需靠运行签到判断")
             mark_site(key, "unknown", "api", message=verify.NO_VERIFIER_HINT)
+            summary["skipped"].append({"key": key, "label": meta["label"], "reason": "无在线接口"})
             continue
         _append(run, f"「{meta['label']}」校验中…")
         per_account = []
@@ -409,15 +426,20 @@ def _do_verify(run: dict, site_keys: list[str]) -> None:
         else:
             state = "unknown"
         users = "、".join([one["user"] for one in per_account if one.get("user")])
+        message = "；".join([one["message"] for one in per_account])[:300]
         mark_site(
             key,
             state,
             "api",
             accounts=per_account,
             user=users or None,
-            message="；".join([one["message"] for one in per_account])[:300],
+            message=message,
         )
+        # 「无法判定」不进 invalid：网络抖动 / 风控都会落到 unknown，
+        # 当成失效去通知就是天天误报（见 autoverify 的设计说明）。
+        summary[state].append({"key": key, "label": meta["label"], "user": users or None, "message": message})
     _finish(run, "done", 0)
+    return summary
 
 
 def bootstrap() -> None:

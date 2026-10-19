@@ -104,6 +104,9 @@
     if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
     return `${Math.floor(s / 86400)} 天前`;
   };
+  // 运行记录的种类：定时校验也是 verify，但要和「我点的批量校验」区分开
+  const runLabel = (run) =>
+    run.kind === "verify" ? (run.auto ? "定时校验" : "批量校验") : "签到任务";
 
   /* ======================================================================
      登录 / 首次设置
@@ -790,7 +793,7 @@
         box.textContent = text || "…";
         if (atBottom) box.scrollTop = box.scrollHeight;
         $("drawerTitle").textContent =
-          (run.kind === "verify" ? "批量校验" : "签到任务") + " · " +
+          runLabel(run) + " · " +
           ({ running: "运行中", done: "已完成", failed: "失败" }[run.status] || run.status) + " · " +
           Math.round((run.finished_at || Date.now() / 1000) - run.started_at) + "s";
         if (run.status === "running") return pollRun();
@@ -816,7 +819,7 @@
         ? runs.map((run) => `
       <div class="hist">
         <div class="h-main">
-          <b>${run.kind === "verify" ? "批量校验" : "签到任务"}</b>
+          <b>${runLabel(run)}</b>
           <span>${esc((run.site_keys || []).join("、") || "全部站点")} · 用时 ${run.finished_at ? Math.round(run.finished_at - run.started_at) + " 秒" : "运行中"}</span>
         </div>
         <span class="spacer"></span>
@@ -996,6 +999,17 @@
     }
   }
 
+  /* 定时校验的说明行：一行说清「上次 / 下次 + 规矩」，别写成一段话 */
+  function verifyTip(vs) {
+    if (!vs || !vs.enabled) return "已关闭。打开后按 cron 定期在线校验已配置站点，全部有效时不打扰你。";
+    const short = (ts) => (ts ? fmtTime(ts).slice(5, 16) : "—");
+    const last = vs.last_run_at ? `上次 ${short(vs.last_run_at)}` : "还没跑过";
+    const next = vs.next_run_at && vs.next_run_at * 1000 <= Date.now() ? "即将执行" : short(vs.next_run_at);
+    const bad = (vs.last_result && (vs.last_result.invalid || []).length) || 0;
+    const err = vs.last_error ? `｜出错：${vs.last_error}` : "";
+    return `${last}${bad ? `（${bad} 个站点失效）` : ""} ｜ 下次 ${next} —— 只校验已配置且有在线接口的站点；全部有效时静默；同一批失效每 ${vs.remind_after_hours || 24} 小时最多提醒一次。${err}`;
+  }
+
   async function openSettings() {
     const st = S.state;
     const sch = st.schedule;
@@ -1006,6 +1020,17 @@
     $("schCron").value = sch.cron;
     $("schPreset").value = sch.presets.some((p) => p.cron === sch.cron) ? sch.cron : "__custom";
     $("schTip").textContent = `crontab 文件：${sch.crontab_path}（只改标记区块，其它行不动）`;
+
+    const vs = st.verify_schedule || {};
+    const vpresets = vs.presets || [];
+    $("vsEnabled").checked = vs.enabled !== false;
+    $("vsNotify").checked = vs.notify !== false;
+    $("vsPreset").innerHTML =
+      vpresets.map((p) => `<option value="${esc(p.cron)}">${esc(p.label)}</option>`).join("") +
+      `<option value="__custom">自定义</option>`;
+    $("vsCron").value = vs.cron || "0 */6 * * *";
+    $("vsPreset").value = vpresets.some((p) => p.cron === vs.cron) ? vs.cron : "__custom";
+    $("vsTip").textContent = verifyTip(vs);
 
     $("accCurrent").textContent = (S.auth && S.auth.username) || st.panel.user || "—";
     $("accUser").value = (S.auth && S.auth.username) || st.panel.user || "";
@@ -1144,6 +1169,26 @@
       try {
         const r = await api("/schedule", { method: "PUT", body: { enabled: $("schEnabled").checked, cron: $("schCron").value.trim() } });
         toast(r.applied ? "定时任务已生效" : "已保存，但容器内 crontab 未能应用");
+        await loadState(true);
+      } catch (e) { toast("保存失败：" + e.message); }
+    };
+
+    $("vsPreset").onchange = () => {
+      if ($("vsPreset").value !== "__custom") $("vsCron").value = $("vsPreset").value;
+    };
+
+    $("btnSaveVerify").onclick = async () => {
+      try {
+        const r = await api("/verify-schedule", {
+          method: "PUT",
+          body: {
+            enabled: $("vsEnabled").checked,
+            cron: $("vsCron").value.trim(),
+            notify: $("vsNotify").checked,
+          },
+        });
+        $("vsTip").textContent = verifyTip(r);
+        toast(r.enabled ? "定时校验已生效" : "定时校验已关闭");
         await loadState(true);
       } catch (e) { toast("保存失败：" + e.message); }
     };

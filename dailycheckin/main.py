@@ -113,11 +113,11 @@ def checkin():
         )
         # 一次任务只推一条：站点结果 + 上面的任务元信息拼在同一条消息里，
         # 由 message.push_message 负责加标题、插分隔行。
-        # 标题里带项目名，方便一眼认出这条通知是谁发的。
+        # 标题里带项目名，方便一眼认出这条通知是谁发的；不带日期，日期正文里「开始时间」有。
         push_message(
             content_list=content_list,
             notice_info=notice_info,
-            title=f"{PROJECT_NAME} 每日签到 · {utc_time[:10]}",
+            title=f"{PROJECT_NAME} 每日签到",
         )
         return
 

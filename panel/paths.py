@@ -28,6 +28,8 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 STATUS_PATH = os.path.join(DATA_DIR, "panel_status.json")
 RUNS_PATH = os.path.join(DATA_DIR, "panel_runs.json")
 AUTH_PATH = os.path.join(DATA_DIR, "panel_auth.json")
+# 定时校验的计划与「哪些失效已经通知过」都记在这里，重启不丢
+VERIFY_PATH = os.path.join(DATA_DIR, "panel_verify.json")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 
 HOST = _env("PANEL_HOST", "0.0.0.0")

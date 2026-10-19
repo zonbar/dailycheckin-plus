@@ -306,6 +306,39 @@ check("提示保持一句话（会进通知正文，不能写成长篇）",
       all(len(h) < 60 for _n, h in runner.ERROR_HINTS),
       [len(h) for _n, h in runner.ERROR_HINTS])
 
+print("12) 定时校验：设置页能配 cron，失效才通知")
+# 需求：按 cron 定期校验已配置站点；**全部有效时静默**，只有失效才推一条「校验提醒」。
+with open(os.path.join(ROOT, "panel", "autoverify.py"), encoding="utf-8") as f:
+    auto_src = f.read()
+with open(os.path.join(ROOT, "panel", "server.py"), encoding="utf-8") as f:
+    server_src = f.read()
+
+check("设置页有「定时校验」区块", "定时校验" in html)
+for el in ("vsEnabled", "vsPreset", "vsCron", "vsNotify", "btnSaveVerify"):
+    check(f"设置页有 {el}", f'id="{el}"' in html)
+check("默认每 6 小时", 'DEFAULT_CRON = "0 */6 * * *"' in auto_src)
+check("预设列表里第一项就是每 6 小时", auto_src.index("每 6 小时") < auto_src.index("每 12 小时"))
+check("cron 走和定时签到一样的「预设 + 自定义」", 'value="__custom"' in js and 'id="vsPreset"' in html)
+check("保存走 PUT /api/verify-schedule", 'api("/verify-schedule"' in js and 'r"/api/verify-schedule"' in server_src)
+check("后端把定时校验挂在面板启动时", "autoverify.start()" in server_src)
+check("非法 cron 由后端拒（400）",
+      "except ValueError as exc" in server_src and "autoverify.set_config" in server_src)
+# 通知语义
+check("全部有效时安静（没有失效站点 → 不发）", '"没有失效站点"' in auto_src)
+check("「无法判定」不落进 invalid 桶（写进代码，不靠注释）",
+      'summary[state].append' in open(os.path.join(ROOT, "panel", "runner.py"), encoding="utf-8").read())
+check("同一批失效 24 小时内不重复提醒", "REMIND_AFTER = 24 * 3600" in auto_src)
+check("恢复后清掉记录，下次再坏能立刻推", "if key not in bad_keys" in auto_src)
+check("失效通知标题是「<项目名> 校验提醒」", '} 校验提醒"' in auto_src)
+check("推送走子进程（面板保持零依赖）",
+      "subprocess.run" in auto_src and "notify_push.py" in auto_src)
+check("有推送渠道才发（没配就只记原因）", "NOTICE_KEY_NAMES" in auto_src and "_notice_configured" in auto_src)
+# 标题契约
+with open(os.path.join(ROOT, "dailycheckin", "main.py"), encoding="utf-8") as f:
+    main_src = f.read()
+check("签到通知标题不带日期", "每日签到 ·" not in main_src and "utc_time[:10]" not in main_src)
+check("运行记录区分「定时校验」与「批量校验」", 'run.auto ? "定时校验"' in js)
+
 print("=" * 66)
 print(f"通过 {len(passed)}  失败 {len(failed)}")
 for one in failed:

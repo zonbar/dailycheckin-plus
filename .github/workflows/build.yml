@@ -170,6 +170,8 @@ jobs:
           python3 tools/test_schedule.py
           echo "--- 前端契约自测：首屏不预置登录屏、默认已配置优先、卡片 4 列 / 列表 2 列"
           python3 tools/test_panel_static.py
+          echo "--- 定时校验自测：cron 算法、只在失效时通知、同一批失效 24 小时内不重复"
+          python3 tools/test_autoverify.py
           echo "--- UPSTREAM.json 溯源信息"
           python3 -c "import json;s=json.load(open('UPSTREAM.json',encoding='utf-8'));print('上游',s['repo'],'@',s['ref'],s['commit'][:10],'| 引擎版本',s['version'],'| 本地补丁',len(s['patches']),'个 | 站点',len(s['engine_sites']),'个');assert s['commit'] and s['engine_sites'] and s['patches']"
           echo "--- 两个本地补丁的代码特征必须在引擎里"
@@ -187,6 +189,20 @@ jobs:
           set -e
           curl -fsS -H "X-Panel-Token: ci-secret" http://127.0.0.1:18080/api/state -o state-notice.json
           python3 -c "import json;st=json.load(open('state-notice.json',encoding='utf-8'));g=st['notice_groups'];k=[f['key'] for x in g for f in x['fields']];assert len(g)==11,len(g);assert k==[i['key'] for i in st['notice_keys']],'分组后的键必须与扁平列表一字不差';assert len(set(k))==27,len(k);assert sum(1 for x in g if x['wide'])==1,'整行铺开的组只该有企业微信';assert all(f['label'] and f['full'] for x in g for f in x['fields']);print('推送通知分组:','、'.join('%s(%d)'%(x['name'],len(x['fields'])) for x in g))"
+
+      - name: 定时校验：接口在、默认每 6 小时、非法 cron 被拒
+        run: |
+          set -e
+          B=http://127.0.0.1:18080
+          curl -fsS -H "X-Panel-Token: ci-secret" $B/api/verify-schedule -o vs.json
+          python3 -c "import json;v=json.load(open('vs.json',encoding='utf-8'));assert v['cron']=='0 */6 * * *',v;assert v['enabled'] and v['notify'],v;assert v['presets'],v;print('定时校验默认:',v['cron'],'| 预设',len(v['presets']),'项')"
+          curl -fsS -H "X-Panel-Token: ci-secret" -H "Content-Type: application/json" \
+            -X PUT -d '{"enabled":true,"cron":"0 */12 * * *","notify":true}' $B/api/verify-schedule -o vs2.json
+          python3 -c "import json,time;v=json.load(open('vs2.json',encoding='utf-8'));assert v['cron']=='0 */12 * * *',v;assert v['next_run_at']>time.time(),v;print('下次校验:',time.strftime('%Y-%m-%d %H:%M',time.localtime(v['next_run_at'])))"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Panel-Token: ci-secret" -H "Content-Type: application/json" \
+            -X PUT -d '{"enabled":true,"cron":"0 99 * * *","notify":true}' $B/api/verify-schedule)
+          test "$code" = "400" || { echo "非法 cron 没被拒绝，返回 $code"; exit 1; }
+          echo "非法 cron 已拒绝（400）"
 
       - name: 「关于本项目」的更新检查：构建溯源 + /api/update 不会把面板拖垮
         run: |

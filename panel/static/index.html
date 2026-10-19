@@ -226,6 +226,20 @@
     </div>
 
     <div class="section">
+      <h4>定时校验 <span class="muted">（定期在线校验 cookie，失效才通知）</span></h4>
+      <div class="row" style="margin:0">
+        <label class="switch"><input type="checkbox" id="vsEnabled"> 启用定时校验</label>
+        <select id="vsPreset" style="width:auto"></select>
+        <label class="switch"><input type="checkbox" id="vsNotify"> 失效时推送通知</label>
+      </div>
+      <div class="row">
+        <input type="text" id="vsCron" placeholder="分 时 日 月 周，例如 0 */6 * * *" style="font-family:var(--mono)">
+        <button class="primary" id="btnSaveVerify">保存并生效</button>
+      </div>
+      <p class="tip" id="vsTip"></p>
+    </div>
+
+    <div class="section">
       <h4>推送通知 <span class="muted">（可选。填了就把签到结果推给你）</span></h4>
       <p class="muted" style="font-size:12px;margin:0 0 10px">
         一次签到只推<b>一条</b>消息：带标题，各站点结果之间用分隔行隔开，末尾附任务信息与项目地址。

@@ -57,7 +57,7 @@ def check(name, cond, detail=""):
 # --------------------------------------------------------------------------- #
 # 与 dailycheckin/main.py 里 content_list 的构造方式保持一致
 # --------------------------------------------------------------------------- #
-TITLE = f"{message.PROJECT_NAME} 每日签到 · 2026-10-16"
+TITLE = f"{message.PROJECT_NAME} 每日签到"
 CONTENT = [
     "「V2EX 论坛」\n帐号信息: BZGOGO\n今日签到: 20261016 的每日登录奖励 13 铜币\n帐号余额: 38259.34",
     "「哔哩哔哩」\n第 1 个账号: ✅✅✅✅✅",
@@ -149,6 +149,14 @@ main_src = open(MAIN, encoding="utf-8").read()
 check("main.py 结尾用 PROJECT_URL", "项目地址: {PROJECT_URL}" in main_src, main_src[-300:])
 check("main.py 不再硬编码上游地址", "Sitoi/dailycheckin\"" not in main_src, "main.py 里还有写死的上游链接")
 check("main.py 的标题拼上了项目名", 'title=f"{PROJECT_NAME} 每日签到' in main_src, main_src[-400:])
+# 标题里带日期的话，同一天跑两次会看到两个不同标题；日期正文「开始时间」里已经有了
+check("标题不带日期（正文里有开始时间）", "每日签到 ·" not in main_src and "utc_time[:10]" not in main_src, "main.py 的标题还在拼日期")
+
+# 9) 「校验提醒」是另一条通知：标题固定，不带日期也不带站点数
+notify_src = open(os.path.join(ROOT, "panel", "autoverify.py"), encoding="utf-8").read()
+check("失效通知标题是「<项目名> 校验提醒」", '} 校验提醒"' in notify_src, "autoverify.py 里找不到标题格式")
+check("失效通知也复用引擎渲染（分隔行/标题不会跑偏）",
+      '"blocks"' in notify_src and "notify_push.py" in notify_src, "推送没走子进程 + 引擎渲染")
 
 print("=" * 66)
 print(f"通过 {len(passed)}  失败 {len(failed)}")

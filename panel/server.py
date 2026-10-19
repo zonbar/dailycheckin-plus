@@ -15,7 +15,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, catalog, cookies as ck, paths, runner, schedule, store, update, upstream, verify
+from . import auth, autoverify, catalog, cookies as ck, paths, runner, schedule, store, update, upstream, verify
 
 PANEL_VERSION = "2.1.0"
 MAX_BODY = 4 * 1024 * 1024
@@ -129,6 +129,7 @@ def build_state() -> dict:
         # 要不要更新再由页面自己异步打 /api/update 问。
         "update": update.local_info(PANEL_VERSION),
         "schedule": schedule.parse(),
+        "verify_schedule": autoverify.parse(),
         "status_updated": status.get("updated", 0),
         "runs": runner.list_runs(8),
         "backups": store.list_backups()[:8],
@@ -371,6 +372,25 @@ def h_verify(h):
     if not isinstance(sites, list):
         raise HttpError(400, "sites 必须是数组")
     return runner.start_verify([str(s) for s in sites])
+
+
+@route("GET", r"/api/verify-schedule")
+def h_verify_schedule(h):
+    return autoverify.parse()
+
+
+@route("PUT", r"/api/verify-schedule")
+def h_verify_schedule_put(h):
+    body = h.body()
+    cron = str(body.get("cron") or "").strip()
+    try:
+        return autoverify.set_config(
+            bool(body.get("enabled")),
+            cron,
+            bool(body.get("notify", True)),
+        )
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
 
 
 @route("GET", r"/api/runs")
@@ -617,6 +637,8 @@ class Handler(BaseHTTPRequestHandler):
 def serve() -> None:
     paths.ensure_dirs()
     runner.bootstrap()
+    # 定时校验：后台线程按 cron 跑，只有失效才推通知（见 panel/autoverify.py）
+    autoverify.start()
     note = auth.bootstrap_from_env()
     httpd = ThreadingHTTPServer((paths.HOST, paths.PORT), Handler)
     httpd.daemon_threads = True
