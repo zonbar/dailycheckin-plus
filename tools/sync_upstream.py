@@ -58,6 +58,18 @@ PROTECTED_FILES = {"setup.py"}  # 本地有意改动过（find_packages 排除 p
 
 SKIP_NAMES = {"__pycache__", ".DS_Store"}
 
+# 本项目自己新增、上游没有的站点模块（小写目录名）。
+#
+# 为什么必须显式列出：copy_tree() 落地引擎时是「先 rmtree 整个 dailycheckin/ 再 copytree」，
+# 所以任何只存在于本地的站点目录都会在下一次同步时**被无声删掉**。
+# 上游改引擎文件靠 patches/ 重放补丁，但站点模块没法用补丁表达（它是新增文件），
+# 只能在这里登记成「本地资产」，同步时原样保留。
+#
+# 新增本地站点时改这里，并顺手在 panel/catalog.py 补上元数据。
+LOCAL_SITE_MODULES = {
+    "weibo": "微博超话（本项目新增，走 m.weibo.cn 移动端接口）",
+}
+
 
 # --------------------------------------------------------------------------- #
 # 小工具
@@ -147,6 +159,64 @@ def copy_tree(src: str, dst: str, file_mode: int = 0o644, dir_mode: int = 0o755)
 # --------------------------------------------------------------------------- #
 # 站点目录探测
 # --------------------------------------------------------------------------- #
+def upstream_comparable(sites: dict) -> dict:
+    """把本地站点模块从「本地站点」字典里摘掉，只留下能和上游比对的那些。
+
+    本地新增的站点（LOCAL_SITE_MODULES）不在上游清单里，若不摘出去，
+    report_sites 会把它们判成「上游移除了该站点」——--check 和 --dry-run
+    两条路径都会每次误报一遍。统一走这个函数，避免两处逻辑各写一份而跑偏。
+    """
+    return {k: v for k, v in sites.items() if k.lower() not in LOCAL_SITE_MODULES}
+
+
+def preserve_local_modules(backup: str) -> list:
+    """把备份里的「本地站点模块」拷回同步后的引擎目录，返回实际恢复的目录名。
+
+    copy_tree 会 rmtree 整个 dailycheckin/，本地新增的站点目录扛不住这一下。
+    这里在替换引擎之后、上补丁之前，把 LOCAL_SITE_MODULES 里登记的目录搬回去。
+    """
+    restored = []
+    for name in sorted(LOCAL_SITE_MODULES):
+        src = os.path.join(backup, name)
+        dst = os.path.join(ENGINE_DIR, name)
+        if not os.path.isdir(src):
+            continue
+        if os.path.isdir(dst):
+            # 上游 someday 自己加了同名模块：以本地为准（本地才是当前在用的版本），
+            # 但要说清楚，避免静默覆盖掉上游实现。
+            log("   ! %s/ 上游已存在同名模块，保留本地版本（如需切回上游请手动处理）" % name)
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        for root, dirs, files in os.walk(dst):
+            for entry in dirs:
+                _chmod(os.path.join(root, entry), 0o755)
+            for entry in files:
+                if entry.endswith(".pyc"):
+                    continue
+                _chmod(os.path.join(root, entry), 0o644)
+        restored.append(name)
+    return restored
+
+
+def report_local_modules() -> None:
+    """打印本地站点模块清单，并提示是否缺元数据 / 缺 __init__.py。"""
+    live = [name for name in sorted(LOCAL_SITE_MODULES) if os.path.isdir(os.path.join(ENGINE_DIR, name))]
+    missing = [name for name in sorted(LOCAL_SITE_MODULES) if not os.path.isdir(os.path.join(ENGINE_DIR, name))]
+    if live:
+        log("   本地站点模块 %d 个（同步时保留）：" % len(live))
+        for name in live:
+            log("      * %-12s %s" % (name.upper(), LOCAL_SITE_MODULES.get(name, "")))
+    for name in missing:
+        log("   ✗ 本地站点模块 %s/ 不见了（可能被误删或目录改名）" % name)
+    # __init__.py 缺失时目录仍能被 walk_packages 当命名空间包扫到，但行为不稳；
+    # 这里明确提示，免得等到「站点凭空消失」才发现。
+    for name in live:
+        init = os.path.join(ENGINE_DIR, name, "__init__.py")
+        if not os.path.isfile(init):
+            log("   ✗ 本地站点模块 %s/ 缺少 __init__.py，建议补一个空文件" % name)
+
+
 def site_dirs(engine_root: str) -> dict:
     """从引擎源码目录里找出所有站点模块，返回 {大写KEY: 中文名}。
 
@@ -464,7 +534,9 @@ def do_check(args) -> int:
     upstream_sites = site_dirs_from_api(sha, repo)
     local_sites = site_dirs(ENGINE_DIR)
     log("   上游站点模块 : %d 个" % len(upstream_sites))
-    changed = report_sites(local_sites, upstream_sites)
+    # 本地模块不在上游清单里，比对前先摘出去，否则每次都误报成「上游移除了该站点」
+    changed = report_sites(upstream_comparable(local_sites), upstream_sites)
+    report_local_modules()
 
     if sha == recorded and not changed:
         log("\n结论：已是最新，无需同步。")
@@ -496,9 +568,14 @@ def do_sync(args) -> int:
         return 1
     log("   提交 %s (%s)" % (sha[:10], commit_date))
 
+    # old_sites 用于「旧 vs 新」比对。本地新增的站点模块（LOCAL_SITE_MODULES）
+    # 天然不在上游清单里，留着会被 report_sites 判成「上游移除了该站点」——每次
+    # --dry-run 都误报一遍。这里在采集处就摘出去，--check 路径同理。
     old_sites = site_dirs(ENGINE_DIR)
     old_version = engine_version(ENGINE_DIR)
     log("   当前内置引擎版本 %s，站点 %d 个" % (old_version, len(old_sites)))
+    # 本地模块不在上游清单里，比对前先摘出去，否则每次都误报成「上游移除了该站点」
+    cmp_sites = upstream_comparable(old_sites)
 
     step("下载上游源码")
     t0 = time.time()
@@ -524,7 +601,7 @@ def do_sync(args) -> int:
             step("试打补丁（在临时目录里，不动 dailycheckin/）")
             patches_ok = _try_patches(top)
             step("站点与元数据")
-            report_sites(old_sites, new_sites)
+            report_sites(cmp_sites, new_sites)
             report_meta_gaps(new_sites)
             _report_tracked(top, state)
             log("\n（没有写入任何文件）")
@@ -538,8 +615,18 @@ def do_sync(args) -> int:
         backup = os.path.join(tmp, "_backup_engine")
         if os.path.isdir(ENGINE_DIR):
             shutil.copytree(ENGINE_DIR, backup, ignore=shutil.ignore_patterns(*SKIP_NAMES, "*.pyc"))
+            # 备份里可能带着 __pycache__，恢复时别把它写回源码目录
+            for entry in list(LOCAL_SITE_MODULES):
+                cache = os.path.join(backup, entry, "__pycache__")
+                if os.path.isdir(cache):
+                    shutil.rmtree(cache, ignore_errors=True)
         count = copy_tree(up_engine, ENGINE_DIR)
         log("   已写入 %d 个文件到 dailycheckin/" % count)
+
+        # copy_tree 是 rmtree + copytree，本地新增的站点模块扛不住，必须搬回来
+        restored = preserve_local_modules(backup)
+        if restored:
+            log("   已恢复本地站点模块 %d 个：%s" % (len(restored), "、".join(restored)))
 
         step("重放本地补丁")
         try:
@@ -566,6 +653,11 @@ def do_sync(args) -> int:
         step("写入 UPSTREAM.json")
         patches = sorted(n for n in os.listdir(PATCH_DIR) if n.endswith(".patch")) if os.path.isdir(PATCH_DIR) else []
         synced_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # engine_sites 记录的是「引擎目录里实际存在的站点」，所以要把刚恢复回来的
+        # 本地模块也算进去，否则状态文件会和磁盘对不上（tools/test_sync_upstream.py 会红）
+        engine_sites = sorted(new_sites) + [
+            name.upper() for name in restored if name.upper() not in {k.upper() for k in new_sites}
+        ]
         new_state = {
             "repo": repo,
             "ref": ref,
@@ -575,9 +667,11 @@ def do_sync(args) -> int:
             "synced_at": synced_at,
             "sync_tool": "tools/sync_upstream.py",
             "patches": patches,
-            "engine_sites": sorted(new_sites),
+            "engine_sites": sorted(engine_sites),
+            "local_site_modules": sorted(LOCAL_SITE_MODULES),
             "tracked_files": file_info,
-            "note": "引擎源码来自上游，patches/ 里的补丁在同步后自动重放。不要手工覆盖 dailycheckin/。",
+            "note": "引擎源码来自上游，patches/ 里的补丁在同步后自动重放。"
+            "local_site_modules 里登记的站点为本项目新增，同步时保留。不要手工覆盖 dailycheckin/。",
         }
         # 上游没动、补丁也没变的时候，只刷新 synced_at 会白造一次提交
         # （CI 是靠 git diff 判断「有没有变化」的），所以这里沿用上一次的时间戳。
@@ -589,7 +683,8 @@ def do_sync(args) -> int:
         log("   已写入 %s" % os.path.relpath(STATE_PATH, ROOT).replace("\\", "/"))
 
     step("结果")
-    report_sites(old_sites, new_sites)
+    report_sites(cmp_sites, new_sites)
+    report_local_modules()
     gaps = report_meta_gaps(site_dirs(ENGINE_DIR))
 
     log("")

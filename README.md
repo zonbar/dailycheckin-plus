@@ -106,7 +106,7 @@ cd "$D" && docker compose pull && docker compose up -d
 
 ## 支持的站点
 
-清单从引擎里**自动发现** —— 上游加了新站，刷新面板就会出现，不用改代码。当前 16 个：
+清单从引擎里**自动发现** —— 上游加了新站，刷新面板就会出现，不用改代码。当前 17 个：
 
 | 站点 | KEY | 凭据（必填） |
 |---|---|---|
@@ -121,6 +121,7 @@ cd "$D" && docker compose pull && docker compose up -d
 | 恩山无线论坛 | `ENSHAN` | Cookie `TWcq_2132_auth` |
 | 飞牛 NAS 论坛 | `FNNASCLUB` | Cookie `pvRK_2132_auth` |
 | 全民 K 歌 | `KGQQ` | Cookie `uid`、`openid`、`openkey` |
+| 微博超话 | `WEIBO` | Cookie `SUB`（本项目新增，见下） |
 | 阿里云盘 | `ALIYUN` | refresh_token |
 | i 茅台 | `IMAOTAI` | `token`、`userid`、`mobile` 等 |
 | AcFun | `ACFUN` | 账号密码 |
@@ -128,6 +129,20 @@ cd "$D" && docker compose pull && docker compose up -d
 | 百度站点提交 | `BAIDU` | 表单 |
 
 新站**开箱可用**（能配、能存、能签到），只是精细度降一档：不拦必填字段、没有在线校验、LOGO 退回图标。想补全，照 `panel/catalog.py` 里已有写法加一段元数据即可。
+
+### 微博超话（`WEIBO`，本项目新增）
+
+签到**关注的超话**，默认只签「周杰伦」，可在站点设置里改成别的超话名（逗号分隔），或填 `all` 签全部。
+
+取 cookie：登录 <https://m.weibo.cn/> → `F12` → Application → Cookies → `m.weibo.cn`，**必须复制 `SUB`**，建议整块复制（含 `SUBP` / `_T_WM`）。
+`SUB` 的值几乎总是以 `==` 结尾，面板会完整保留 —— 这个站点用的是 `partition("=")` 解析，不会像其它站点那样被截断。
+
+几点说明：
+
+* 走的是 **m.weibo.cn 移动端接口**，不是 weibo.com 网页版。网页版 session 有 7 天硬性失效，移动端独立登录体系存活期更长。
+* **必须先在微博里关注对应超话**，否则拉不到列表、签不了（面板会明确提示「没关注该超话」）。
+* 微博对机房 IP 风控较严，返回 HTTP 432 时可在站点设置里填代理地址。
+* 触发风控需要人工验证时，运行结果里会给出验证链接，点完再跑一次即可。
 
 **怎么拿 cookie**：登录目标网站 → `F12` → **Application** → **Cookies** → 选中域名 → 表格里 `Ctrl+A` `Ctrl+C` 复制。或用 [Cookie-Editor](https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) 插件 **Export → JSON** 整块贴进来。
 cookie 等于账号密码，**别外发** —— 它只存在你本机的 `config/config.json`，不会上传到任何地方。
@@ -166,6 +181,11 @@ python tools/sync_upstream.py --ref 25.12.9   # 指定 tag / 分支 / commit
 **同步完仓库不等于容器换了新引擎**：容器用的是镜像，得再按上面「升级」那条命令更新一次。想知道自己这台跑的是哪版，看设置页「关于本项目」的构建提交。
 
 两个本地补丁：`0001` 修 B 站分区接口（上游接口下线导致 `AttributeError`，已提 [PR #592](https://github.com/Sitoi/dailycheckin/pull/592)，上游合并后删掉即可）、`0002` 把通知改成恒定一条。
+
+本项目自己新增的站点模块（目前是 `weibo`）登记在 `tools/sync_upstream.py` 的 `LOCAL_SITE_MODULES`。
+因为替换引擎是「整个 `dailycheckin/` 删掉重铺」，不登记的话它会在下次同步时**无声消失**；登记后同步会自动把它原样搬回来，并在输出里单独列出来。**要加自己的本地站点，就往这个集合里加一行。**
+
+离线自测（不需要网络）：`python tools/test_sync_upstream.py`（补丁重放 / 冲突回滚）、`tools/test_notice.py`（通知一条）、`tools/test_schedule.py`（crontab 托管区块）、`tools/test_panel_static.py`（前端契约）、`tools/test_weibo.py`（微博超话解析与签到分支）、`tools/test_sync_local_modules.py`（本地模块在同步后仍存活）。
 
 离线自测（不需要网络）：`python tools/test_sync_upstream.py`（补丁重放 / 冲突回滚）、`tools/test_notice.py`（通知一条）、`tools/test_schedule.py`（crontab 托管区块）、`tools/test_panel_static.py`（前端契约）。
 

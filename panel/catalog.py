@@ -207,6 +207,40 @@ SITE_META: dict[str, dict] = {
             {"key": "times", "label": "提交条数", "type": "int", "default": 100},
         ],
     },
+    "WEIBO": {
+        "label": "微博超话",
+        "emoji": "🌸",
+        "group": "社交",
+        "required": ["SUB"],
+        "recommended": ["SUBP", "_T_WM", "SSOLoginState"],
+        "verify": "weibo",
+        "howto": "登录 m.weibo.cn（手机版微博网页）→ F12 → Application → Cookies → m.weibo.cn，"
+        "必须复制 SUB，建议整块复制（含 SUBP / _T_WM）。注意 SUB 的值里常有 = 结尾，"
+        "面板会自动保留，不要手动删掉",
+        "fields": [
+            {
+                "key": "topics",
+                "label": "签到超话",
+                "type": "str",
+                "default": "周杰伦",
+                "help": "超话名，多个用逗号分隔；填 all 表示签到全部关注的超话",
+            },
+            {
+                "key": "max_pages",
+                "label": "拉取页数",
+                "type": "int",
+                "default": 5,
+                "help": "关注的超话很多时可调大（每页 20 个）",
+            },
+            {
+                "key": "proxy",
+                "label": "代理地址",
+                "type": "str",
+                "default": "",
+                "help": "可选。微博对机房 IP 风控较严，返回 HTTP 432 时可填。例：http://127.0.0.1:1080",
+            },
+        ],
+    },
 }
 
 DEFAULT_META = {
@@ -248,6 +282,7 @@ SITE_LINKS: dict[str, dict[str, str]] = {
     "ACFUN": {"site": "https://www.acfun.cn/", "logo": "https://www.acfun.cn/favicon.ico"},
     "MIMOTION": {"site": "https://www.mi.com/", "logo": "https://www.mi.com/favicon.ico"},
     "BAIDU": {"site": "https://ziyuan.baidu.com/", "logo": "https://ziyuan.baidu.com/favicon.ico"},
+    "WEIBO": {"site": "https://m.weibo.cn/", "logo": "https://weibo.com/favicon.ico"},
 }
 
 

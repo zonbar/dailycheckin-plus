@@ -144,7 +144,7 @@ def local_check(key: str, account: dict) -> dict:
         raw = str(account.get("cookie") or "")
         if not raw.strip():
             return {"ok": None, "message": "未填写 cookie", "warnings": [], "missing": [], "keys": [], "count": 0}
-        result = ck.normalize(raw, required=meta.get("required") or [])
+        result = ck.normalize(raw, required=meta.get("required") or [], site=key)
         return {
             "ok": result.ok,
             "message": result.cookie if result.ok else "；".join(result.errors) or "缺少必填字段",
@@ -271,7 +271,7 @@ def h_normalize(h):
     raw = body.get("raw", "")
     key = str(body.get("site", "")).upper()
     required = catalog.required_of(key) if key else []
-    result = ck.normalize(raw, required=required)
+    result = ck.normalize(raw, required=required, site=key)
     out = result.as_dict()
     out["required"] = required
     out["recommended"] = catalog.site_meta(key).get("recommended", []) if key else []
@@ -294,7 +294,7 @@ def h_save_accounts(h):
             if str(field_key).startswith("_"):
                 continue
             if field_key == "cookie":
-                result = ck.normalize(str(value or ""), required=catalog.required_of(key))
+                result = ck.normalize(str(value or ""), required=catalog.required_of(key), site=key)
                 account["cookie"] = result.cookie
                 account["_normalized"] = result.ok
             else:

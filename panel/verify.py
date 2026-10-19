@@ -322,6 +322,43 @@ def _discuz(forum: str, name: str):
     return _verify
 
 
+def v_weibo(cookie: str, account: dict) -> dict:
+    """微博登录态：直接问 /api/config 要 login 字段。
+
+    这是少数几个能明确回答「登没登录」的接口 —— 未登录时它照样返回 200 +
+    `{"data":{"login":false}}`，所以不会像其它站点那样把网络问题误判成 cookie 失效。
+    """
+    try:
+        resp = http(
+            "https://m.weibo.cn/api/config",
+            cookie=cookie,
+            headers={
+                "Referer": "https://m.weibo.cn/",
+                "X-Requested-With": "XMLHttpRequest",
+                "MWeibo-Pwa": "1",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return unknown(f"请求微博接口失败：{exc}")
+    if resp.status == 432:
+        return unknown("被微博风控拦截（HTTP 432），无法判定；可稍后重试或在站点里配置代理")
+    data = _json(resp)
+    if not isinstance(data, dict) or "data" not in data:
+        return unknown(f"微博返回了预期之外的内容（HTTP {resp.status}），无法判定")
+    inner = data.get("data") or {}
+    if not inner.get("login"):
+        return bad("微博返回「未登录」，SUB 已失效，请重新登录后复制 Cookie")
+    user = inner.get("user") or None
+    if isinstance(user, dict):
+        user = user.get("screen_name") or None
+    elif isinstance(user, str):
+        user = user or None
+    else:
+        user = None
+    return ok("登录态正常", user=user)
+
+
 VERIFIERS = {
     "bilibili": v_bilibili,
     "tieba": v_tieba,
@@ -331,6 +368,7 @@ VERIFIERS = {
     "smzdm": v_smzdm,
     "baidupan": v_baidupan,
     "aolaxing": v_aolaxing,
+    "weibo": v_weibo,
     "enshan": _discuz("https://www.right.com.cn/forum", "恩山论坛"),
     "fnnasclub": _discuz("https://club.fnnas.com", "飞牛论坛"),
 }

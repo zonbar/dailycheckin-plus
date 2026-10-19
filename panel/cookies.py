@@ -36,6 +36,10 @@ __all__ = [
 
 SEP = "; "
 
+# 这些站点的模块用 partition("=") 解析 cookie，只切第一个 `=`，值里带 `=` 不会被截断，
+# 所以不适用下面「值含 = 会被引擎截断」的告警（微博的 SUB 几乎必然以 == 结尾）。
+SAFE_EQ_SITES = {"WEIBO"}
+
 # 值里出现这些字符时，引擎的 split 解析会出问题，需要提醒用户
 _WS_RE = re.compile(r"\s")
 
@@ -228,12 +232,14 @@ def _dedupe(items: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], list[s
     return [(k, seen[k]) for k in order], duplicated
 
 
-def _inspect(items: list[tuple[str, str]]) -> list[str]:
+def _inspect(items: list[tuple[str, str]], strict_eq: bool = True) -> list[str]:
     warnings: list[str] = []
     empty = [k for k, v in items if v == ""]
     if empty:
         warnings.append("以下字段的值为空，引擎会读到空字符串：" + "、".join(empty))
-    truncated = [k for k, v in items if "=" in v]
+    # 值里含 `=` 会被引擎那句 split("=")[1] 截断。
+    # 但本站点模块（微博）用的是 partition，只切第一个 `=`，所以不适用这条告警。
+    truncated = [k for k, v in items if strict_eq and "=" in v]
     if truncated:
         warnings.append(
             "以下字段的值里含 `=`（常见于 Base64 结尾的填充符）："
@@ -306,7 +312,7 @@ def normalize(raw: str, required=(), site: str | None = None) -> CookieResult:
         result.duplicates = duplicated
 
     result.items = items
-    result.warnings.extend(_inspect(items))
+    result.warnings.extend(_inspect(items, strict_eq=(site or "").upper() not in SAFE_EQ_SITES))
     result.missing = list(missing_required(items, required))
     result.cookie = build(items)
     result.ok = bool(items) and not result.missing
