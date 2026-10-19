@@ -154,11 +154,14 @@ cookie 等于账号密码，**别外发** —— 它只存在你本机的 `confi
 
 ```bash
 python tools/sync_upstream.py --check     # 只查不改，退出码 2 = 有更新
+python tools/sync_upstream.py --dry-run   # 比对 + 试打补丁，不写任何文件
 python tools/sync_upstream.py             # 同步到 UPSTREAM.json 记录的 ref
 python tools/sync_upstream.py --ref 25.12.9   # 指定 tag / 分支 / commit
 ```
 
 它会下载上游源码、替换 `dailycheckin/`、**重放 `patches/` 里的本地补丁**、更新 `UPSTREAM.json`，并报告站点增减。补丁打不上就整体回滚，绝不留下改了一半的引擎 —— 所以**别手工把上游目录盖过来**，那会悄悄抹掉补丁。仓库 **Actions → sync upstream → Run workflow** 也能点一下自动同步并重建镜像。
+
+补丁**不用手动打**：每次同步都会自动重放，只有上游改到了补丁涉及的那几行才会失败。想提前知道，先跑 `--dry-run` —— 它会在临时目录里把补丁试打一遍，打不上就指出哪个文件哪几行对不上。这时按上游的新代码改 `patches/` 里那一小段（用 `git diff --no-index --src-prefix= --dst-prefix= 原文件 改后文件` 重新生成，路径保留 `dailycheckin/` 前缀），再 `--dry-run` 验证通过就能同步。
 
 **同步完仓库不等于容器换了新引擎**：容器用的是镜像，得再按上面「升级」那条命令更新一次。想知道自己这台跑的是哪版，看设置页「关于本项目」的构建提交。
 

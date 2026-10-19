@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import re
 import shutil
@@ -44,6 +46,17 @@ def patch_files() -> list:
     if not os.path.isdir(S.PATCH_DIR):
         return []
     return [os.path.join(S.PATCH_DIR, n) for n in sorted(os.listdir(S.PATCH_DIR)) if n.endswith(".patch")]
+
+
+def quiet(fn):
+    """跑 fn，但吞掉它打印的日志。
+
+    试打补丁会打印「已重放 …」和冲突详情 —— 在真跑 --dry-run 时那些是要看的，
+    混在自测输出里却会被当成「这一项失败了」。
+    """
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        return fn()
 
 
 def reverse(text: str) -> str:
@@ -251,6 +264,49 @@ def main() -> int:
                   set(modes) == {"0o644"}, str(sorted(set(modes))))
         else:
             print("  · 跳过权限位断言（当前平台没有 exec 位，交给 Linux CI 把关）")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    print("\n== 10) --dry-run 会先试打一遍补丁（提前知道会不会冲突） ==")
+    targets = sorted({rel for _n, (_t, parsed) in parsed_all.items() for rel, _h in parsed})
+    before = {rel: S.sha256(os.path.join(S.ROOT, rel)) for rel in targets}
+    work = tempfile.mkdtemp(prefix="dc-synctest-")
+    try:
+        # 造一份「上游原始源码」：把当前引擎反向还原（工作区里是打过补丁的版本）
+        for name, (text, parsed) in parsed_all.items():
+            rev_map = {r: h for r, h in S.parse_udiff(reverse(text))}
+            for rel, _hunks in parsed:
+                dst = os.path.join(work, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                if not os.path.isfile(dst):
+                    shutil.copyfile(os.path.join(S.ROOT, rel), dst)
+                    S.apply_udiff_file(dst, rev_map[rel])
+
+        check("对上游原始源码，补丁能全部打上", quiet(lambda: S._try_patches(work)) is True)
+
+        after = {rel: S.sha256(os.path.join(S.ROOT, rel)) for rel in targets}
+        check("试打只动临时目录，工作区的引擎文件没被改", before == after)
+
+        # 把补丁期望的某一行改掉，模拟上游重写了这块代码
+        name, (text, parsed) = sorted(parsed_all.items())[0]
+        rel, hunks = parsed[0]
+        target = os.path.join(work, rel)
+        body = open(target, encoding="utf-8").read()
+        line = [l for l in hunks[0][1] if l.strip()][0]
+        open(target, "w", encoding="utf-8", newline="").write(
+            body.replace(line, line + "  # 上游改了", 1))
+
+        check("上游改掉补丁涉及的代码时，试打返回失败（不静默通过）",
+              quiet(lambda: S._try_patches(work)) is False)
+
+        # 报错里的文件名要用调用方给的相对路径，而不是临时目录那一串 ../../..
+        raised = ""
+        try:
+            S.apply_udiff_file(target, hunks, label="dailycheckin/演示.py")
+        except RuntimeError as exc:
+            raised = str(exc)
+        check("试打报错时显示仓库内相对路径", "dailycheckin/演示.py" in raised, raised[:80])
+        check("试打报错时不出现临时目录路径", "dc-synctest-" not in raised, raised[:80])
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

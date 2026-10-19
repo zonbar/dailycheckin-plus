@@ -287,8 +287,12 @@ def _locate(lines, old, hint: int) -> int:
     return -1
 
 
-def apply_udiff_file(path: str, hunks) -> None:
-    """把 hunks 应用到 path 上，失败抛 RuntimeError。"""
+def apply_udiff_file(path: str, hunks, label: str | None = None) -> None:
+    """把 hunks 应用到 path 上，失败抛 RuntimeError。
+
+    label 是报错里显示的文件名。试打补丁时文件在临时目录里，按 ROOT 求相对路径
+    会变成一串 `../../..`，所以调用方可以把仓库里的相对路径直接传进来。
+    """
     with open(path, encoding="utf-8") as f:
         text = f.read()
     had_newline = text.endswith("\n")
@@ -300,7 +304,7 @@ def apply_udiff_file(path: str, hunks) -> None:
             preview = "\n".join("        " + l for l in old[:6])
             raise RuntimeError(
                 "补丁无法应用：%s\n    补丁期望的原文找不到（上游这段代码被改过了），片段：\n%s"
-                % (os.path.relpath(path, ROOT), preview)
+                % (label or os.path.relpath(path, ROOT), preview)
             )
         lines[pos:pos + len(old)] = new
         offset += len(new) - len(old)
@@ -322,10 +326,39 @@ def apply_patches(root: str, patch_dir: str = PATCH_DIR) -> list:
             target = os.path.join(root, rel)
             if not os.path.isfile(target):
                 raise RuntimeError("补丁 %s 的目标文件不存在：%s" % (name, rel))
-            apply_udiff_file(target, hunks)
+            apply_udiff_file(target, hunks, label=rel)
         applied.append(name)
         log("   已重放 %s" % name)
     return applied
+
+
+def _try_patches(top: str) -> bool:
+    """在临时目录里对**上游原始源码**试打一遍补丁，不碰工作区。
+
+    同步失败最常见的原因是上游把补丁涉及的那几行改掉了 —— 没有这一步的话，
+    只能在点了 Run workflow、工作流红了之后才知道。--dry-run 现在先替你打一遍：
+    能打上就放心点，打不上就先把 patches/ 里那一小段改好。
+    """
+    if not os.path.isdir(PATCH_DIR):
+        return True
+    names = sorted(n for n in os.listdir(PATCH_DIR) if n.endswith(".patch"))
+    if not names:
+        return True
+    with tempfile.TemporaryDirectory(prefix="dc-patch-") as tmp:
+        shutil.copytree(
+            os.path.join(top, "dailycheckin"),
+            os.path.join(tmp, "dailycheckin"),
+            ignore=shutil.ignore_patterns(*SKIP_NAMES, "*.pyc"),
+        )
+        try:
+            apply_patches(tmp)
+        except RuntimeError as exc:
+            log("   ✗ " + str(exc))
+            log("   结论：这次同步会失败 —— 补丁打不上时整个引擎会回滚到同步前，")
+            log("         工作流停在「同步上游引擎」那一步，不会提交、也不会发镜像。")
+            return False
+    log("   ✓ %d 个补丁都能打上" % len(names))
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -488,11 +521,18 @@ def do_sync(args) -> int:
 
         if args.dry_run:
             step("--dry-run：只比对，不落地")
+            step("试打补丁（在临时目录里，不动 dailycheckin/）")
+            patches_ok = _try_patches(top)
+            step("站点与元数据")
             report_sites(old_sites, new_sites)
             report_meta_gaps(new_sites)
             _report_tracked(top, state)
             log("\n（没有写入任何文件）")
-            return 0
+            if patches_ok:
+                log("结论：可以同步 → Actions → sync upstream → Run workflow")
+                return 0
+            log("结论：先按上面的提示改好 patches/ 里的补丁，再同步")
+            return 1
 
         step("替换引擎源码")
         backup = os.path.join(tmp, "_backup_engine")
@@ -627,7 +667,7 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="只检查上游有没有更新，不下载不改文件")
     parser.add_argument("--ref", default=None, help="上游 tag / 分支 / commit（默认沿用 UPSTREAM.json 里的，再默认 main）")
     parser.add_argument("--repo", default=None, help="上游仓库，默认 Sitoi/dailycheckin")
-    parser.add_argument("--dry-run", action="store_true", help="下载并比对，但不写入任何文件")
+    parser.add_argument("--dry-run", action="store_true", help="下载并比对，顺便试打一遍补丁，但不写入任何文件")
     parser.add_argument("--no-patch", action="store_true", help="跳过补丁重放（调试用，引擎将不带本项目补丁）")
     args = parser.parse_args()
 
