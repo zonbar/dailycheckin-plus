@@ -60,6 +60,22 @@ cd "$D" && docker compose pull && docker compose up -d
 
 不用 compose 的话，拿同一个镜像挂上这**四个目录**用 `docker run` 起也行；Windows 把 `$PWD` 换成 `${PWD}`，群晖 / 威联通把上面这段贴进 Container Manager / Container Station 的「项目」。
 
+### 用 fork 的镜像（`ghcr.io/zonbar/...`）
+
+仓库带了三个 compose，`image` 一行不同，数据卷完全一致，所以切换时 cookie / 定时任务 / 后台账号都会原样带过去：
+
+| 文件 | 镜像 | 用途 |
+|---|---|---|
+| `docker-compose.yml` | `ghcr.io/beacherz/dailycheckin-plus:latest` | 上游（默认） |
+| `docker-compose.zonbar.yml` | `ghcr.io/zonbar/dailycheckin-plus:latest` | 本仓库镜像 |
+| `docker-compose.local.yml` | 本地 `build: .` | 不依赖 CI，从源码构建 |
+
+> **fork 的 Actions 默认不跑。** GitHub 要求 fork 手动确认一次，在
+> Actions 页点「I understand my workflows, go ahead and enable them」，
+> 或者用 API 触发一次：
+> `POST /repos/<owner>/<repo>/actions/workflows/build.yml/dispatches`，body `{"ref":"main"}`。
+> 触发后冒烟测试通过才会发布镜像；不想等 CI 就直接用 `docker-compose.local.yml`。
+
 ### 数据放在哪
 
 | 目录 | 内容 |
