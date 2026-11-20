@@ -241,6 +241,34 @@ SITE_META: dict[str, dict] = {
             },
         ],
     },
+    "DOUBAO": {
+        "label": "豆包",
+        "emoji": "🫘",
+        "group": "AI",
+        "required": ["sessionid"],
+        "recommended": ["ttwid", "passport_csrf_token"],
+        "verify": "doubao",
+        "credential": "cookie",
+        "auth": "qr",
+        "howto": "两种方式任选其一：① 点「扫码登录」用手机豆包 App 扫码，面板自动拿到登录态（推荐，到期后可一键续期）；"
+        "② 手动登录 www.doubao.com → F12 → Application → Cookies → doubao.com，整块复制 cookie（必须含 sessionid）。"
+        "只有个人账号有「每日签到」，工作版 / 飞书企业账号没有；海外 IP 会被拦，请在境内网络的机器上运行。",
+        "fields": [
+            {
+                "key": "seed",
+                "label": "设备种子",
+                "type": "secret",
+                "help": "扫码登录自动生成，用于多账号设备号隔离；手动填 cookie 时留空即可（会自动用 cookie 生成）",
+            },
+            {
+                "key": "proxy",
+                "label": "代理地址",
+                "type": "str",
+                "default": "",
+                "help": "可选。例：http://127.0.0.1:1080（需境内出口）",
+            },
+        ],
+    },
 }
 
 DEFAULT_META = {
@@ -283,6 +311,7 @@ SITE_LINKS: dict[str, dict[str, str]] = {
     "MIMOTION": {"site": "https://www.mi.com/", "logo": "https://www.mi.com/favicon.ico"},
     "BAIDU": {"site": "https://ziyuan.baidu.com/", "logo": "https://ziyuan.baidu.com/favicon.ico"},
     "WEIBO": {"site": "https://m.weibo.cn/", "logo": "https://weibo.com/favicon.ico"},
+    "DOUBAO": {"site": "https://www.doubao.com/", "logo": "https://www.doubao.com/favicon.ico"},
 }
 
 
@@ -356,6 +385,7 @@ def merge_sites(discovered: dict) -> list[dict]:
                 "emoji": meta.get("emoji", "🧩"),
                 "group": meta.get("group", "其它"),
                 "credential": meta.get("credential") or "cookie",
+                "auth": meta.get("auth") or "",
                 "required": list(meta.get("required") or []),
                 "recommended": list(meta.get("recommended") or []),
                 "fields": list(meta.get("fields") or []),

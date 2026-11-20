@@ -38,7 +38,7 @@ SEP = "; "
 
 # 这些站点的模块用 partition("=") 解析 cookie，只切第一个 `=`，值里带 `=` 不会被截断，
 # 所以不适用下面「值含 = 会被引擎截断」的告警（微博的 SUB 几乎必然以 == 结尾）。
-SAFE_EQ_SITES = {"WEIBO"}
+SAFE_EQ_SITES = {"WEIBO", "DOUBAO"}
 
 # 值里出现这些字符时，引擎的 split 解析会出问题，需要提醒用户
 _WS_RE = re.compile(r"\s")

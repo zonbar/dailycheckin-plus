@@ -15,9 +15,9 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, autoverify, catalog, cookies as ck, paths, runner, schedule, store, update, upstream, verify
+from . import auth, autoverify, catalog, cookies as ck, doubao_auth, paths, runner, schedule, store, update, upstream, verify
 
-PANEL_VERSION = "2.1.0"
+PANEL_VERSION = "2.2.0"
 MAX_BODY = 4 * 1024 * 1024
 
 # 不需要登录就能访问的接口：健康检查（给容器 healthcheck 用）与登录/首次设置本身
@@ -354,6 +354,63 @@ def h_verify_site(h):
         message="；".join([one["message"] for one in results])[:300],
     )
     return {"ok": True, "state": state, "results": results, "label": meta["label"]}
+
+
+@route("POST", r"/api/doubao/qr/start")
+def h_doubao_qr_start(h):
+    """开一个扫码会话：面板直接显示二维码，用户用手机豆包 App 扫即可。
+
+    这是「引导到授权链接扫码拿 token」的实现：不需要外部浏览器，也不需要
+    用户手工翻 DevTools；二维码过期可换，确认后 cookie 只留在服务端会话里，
+    等前端调用 apply 才写进 config.json。
+    """
+    try:
+        return doubao_auth.start()
+    except Exception as exc:  # noqa: BLE001 - 把网络错误翻成人话给前端
+        raise HttpError(400, f"获取豆包二维码失败：{exc}") from exc
+
+
+@route("GET", r"/api/doubao/qr/status")
+def h_doubao_qr_status(h):
+    sid = (h.query.get("id") or [""])[0]
+    try:
+        return doubao_auth.status(sid)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(400, f"查询扫码状态失败：{exc}") from exc
+
+
+@route("POST", r"/api/doubao/qr/refresh")
+def h_doubao_qr_refresh(h):
+    sid = str(h.body().get("id") or "")
+    try:
+        return doubao_auth.refresh(sid)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(400, f"换二维码失败：{exc}") from exc
+
+
+@route("POST", r"/api/doubao/qr/cancel")
+def h_doubao_qr_cancel(h):
+    return doubao_auth.cancel(str(h.body().get("id") or ""))
+
+
+@route("POST", r"/api/doubao/qr/apply")
+def h_doubao_qr_apply(h):
+    """把扫码拿到的登录态写进指定账号（续期）或新增账号。"""
+    body = h.body()
+    index = body.get("index", None)
+    if index is not None:
+        try:
+            index = int(index)
+        except (TypeError, ValueError) as exc:
+            raise HttpError(400, "账号序号必须是整数") from exc
+    try:
+        return doubao_auth.apply_cookie(str(body.get("id") or ""), index)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
 
 
 @route("POST", r"/api/run")

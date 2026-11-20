@@ -122,7 +122,7 @@ cd "$D" && docker compose pull && docker compose up -d
 
 ## 支持的站点
 
-清单从引擎里**自动发现** —— 上游加了新站，刷新面板就会出现，不用改代码。当前 17 个：
+清单从引擎里**自动发现** —— 上游加了新站，刷新面板就会出现，不用改代码。当前 18 个：
 
 | 站点 | KEY | 凭据（必填） |
 |---|---|---|
@@ -138,6 +138,7 @@ cd "$D" && docker compose pull && docker compose up -d
 | 飞牛 NAS 论坛 | `FNNASCLUB` | Cookie `pvRK_2132_auth` |
 | 全民 K 歌 | `KGQQ` | Cookie `uid`、`openid`、`openkey` |
 | 微博超话 | `WEIBO` | Cookie `SUB`（本项目新增，见下） |
+| 豆包 | `DOUBAO` | 扫码授权或 Cookie `sessionid`（本项目新增，见下） |
 | 阿里云盘 | `ALIYUN` | refresh_token |
 | i 茅台 | `IMAOTAI` | `token`、`userid`、`mobile` 等 |
 | AcFun | `ACFUN` | 账号密码 |
@@ -162,6 +163,28 @@ cd "$D" && docker compose pull && docker compose up -d
 
 **怎么拿 cookie**：登录目标网站 → `F12` → **Application** → **Cookies** → 选中域名 → 表格里 `Ctrl+A` `Ctrl+C` 复制。或用 [Cookie-Editor](https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) 插件 **Export → JSON** 整块贴进来。
 cookie 等于账号密码，**别外发** —— 它只存在你本机的 `config/config.json`，不会上传到任何地方。
+
+### 豆包（`DOUBAO`，本项目新增）
+
+每日「天天领额度」自动签到，默认 **+200 额度 / 天**。签到前先查任务面板确认今天没签，已签就不重复请求；接口本身也幂等（重复领取返回 `idempotent:true`），所以每天跑多次不会重复发放。配置窗顶部会显示最近一次校验读到的**累计额度、连签天数和今日可领额度**，签到输出里也有。
+
+**两种登录方式，随便挑：**
+
+1. **扫码授权（推荐）**：打开豆包站点配置 → 点「扫码登录 / 添加账号」→ 用**手机豆包 App** 扫面板上的二维码 → 手机点确认。面板会轮询授权状态并直接拿到完整登录 Cookie，不用翻 DevTools。弹窗里也给了「在浏览器打开授权页」的链接，想先在网页里登录也可以。
+   * 二维码有效期只有 60 秒，过期点「换一张」即可；已确认的登录态不会因换码丢失。
+   * 换码 / 续期沿用同一个账号的「设备种子」，设备号不会乱跳。
+2. **手动填 Cookie**：登录 <https://www.doubao.com/> → `F12` → Application → Cookies → `doubao.com`，整块复制进输入框（**必须含 `sessionid`**）。原来的粘贴 / 规范化 / 校验流程全部保留。
+
+**Token 续期**：Cookie 过期后，在该账号那一行点「续期」重新扫码即可 —— 服务端只替换这个账号的 `cookie` 和 `seed`，其它账号和字段原样不动。也可以直接重新粘贴新 Cookie 保存。
+
+**多账号隔离**：每个账号有独立的 Cookie 和 `seed`，`web_id` / `tea_uuid` 由各自 seed 派生，不会共用一个设备号。手动填 Cookie 没写 seed 时会用 Cookie 自身哈希生成，同样互相独立。
+
+几点说明：
+
+* 只有**个人账号**有这个活动；豆包工作版 / 飞书企业账号没有签到任务，面板会明确说明（`code=710010702`），不当成 Cookie 失效。
+* 豆包只认**境内 IP**，海外节点会被拦（所以别指望放在海外 Actions 上跑）；容器所在机器在国内网络就能正常签到。
+* Cookie 失效的错误码是 `710012001`，遇到时面板会提示重新扫码或粘贴新 Cookie。
+* 签到接口纯 Cookie 可打，没有 `a_bogus` / `msToken` 签名校验；活动规则由豆包官方调整，失效后按上面的方式更新即可。
 
 ## 环境变量
 
@@ -198,12 +221,10 @@ python tools/sync_upstream.py --ref 25.12.9   # 指定 tag / 分支 / commit
 
 两个本地补丁：`0001` 修 B 站分区接口（上游接口下线导致 `AttributeError`，已提 [PR #592](https://github.com/Sitoi/dailycheckin/pull/592)，上游合并后删掉即可）、`0002` 把通知改成恒定一条。
 
-本项目自己新增的站点模块（目前是 `weibo`）登记在 `tools/sync_upstream.py` 的 `LOCAL_SITE_MODULES`。
+本项目自己新增的站点模块（目前是 `weibo`、`doubao`）登记在 `tools/sync_upstream.py` 的 `LOCAL_SITE_MODULES`。
 因为替换引擎是「整个 `dailycheckin/` 删掉重铺」，不登记的话它会在下次同步时**无声消失**；登记后同步会自动把它原样搬回来，并在输出里单独列出来。**要加自己的本地站点，就往这个集合里加一行。**
 
-离线自测（不需要网络）：`python tools/test_sync_upstream.py`（补丁重放 / 冲突回滚）、`tools/test_notice.py`（通知一条）、`tools/test_schedule.py`（crontab 托管区块）、`tools/test_panel_static.py`（前端契约）、`tools/test_weibo.py`（微博超话解析与签到分支）、`tools/test_sync_local_modules.py`（本地模块在同步后仍存活）。
-
-离线自测（不需要网络）：`python tools/test_sync_upstream.py`（补丁重放 / 冲突回滚）、`tools/test_notice.py`（通知一条）、`tools/test_schedule.py`（crontab 托管区块）、`tools/test_panel_static.py`（前端契约）。
+离线自测（不需要网络）：`python tools/test_sync_upstream.py`（补丁重放 / 冲突回滚）、`tools/test_notice.py`（通知一条）、`tools/test_schedule.py`（crontab 托管区块）、`tools/test_panel_static.py`（前端契约）、`tools/test_weibo.py`（微博超话解析与签到分支）、`tools/test_sync_local_modules.py`（本地模块在同步后仍存活）、`tools/test_doubao.py`（豆包签到分支 / 设备号隔离 / 扫码续期）。
 
 ## 常见问题
 

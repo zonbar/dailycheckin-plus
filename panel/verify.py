@@ -359,6 +359,102 @@ def v_weibo(cookie: str, account: dict) -> dict:
     return ok("登录态正常", user=user)
 
 
+# --------------------------------------------------------------------------- #
+# 豆包
+# --------------------------------------------------------------------------- #
+DOUBAO_DETAIL = "https://www.doubao.com/alice/ug/campaign/v3/detail/"
+DOUBAO_GROUP = "pc_incentive_task_mvp_v3"
+DOUBAO_LOGIN_INVALID = 710012001
+DOUBAO_NO_ACTIVITY = 710010702
+DOUBAO_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) DoubaoDesktop/2.32.6 Chrome/147.0.7727.149 Safari/537.36"
+)
+DOUBAO_PARAMS = {
+    "version_code": "20800",
+    "language": "zh",
+    "device_platform": "web",
+    "doubao_device_platform": "web",
+    "aid": "497858",
+    "real_aid": "497858",
+    "pkg_type": "release_version",
+    "pc_version": "2.32.6",
+    "doubao_pc_version": "5.72.66",
+    "samantha_web": "1",
+    "web_platform": "desktop",
+    "use-olympus-account": "1",
+    "web_tab_id": "0",
+}
+
+
+def doubao_ids(account: dict) -> dict:
+    """和引擎同一套设备号派生规则；seed 不同 → 设备号不同，多账号不串线。"""
+    import hashlib
+
+    seed = str((account or {}).get("seed") or "").strip()
+    if not seed:
+        seed = hashlib.sha256(str((account or {}).get("cookie") or "").encode("utf-8")).hexdigest()[:32]
+    digest = hashlib.sha256(("doubao-dev:" + seed).encode("utf-8")).digest()
+    return {
+        "web_id": "76" + "".join(str(b % 10) for b in digest[:8]),
+        "tea_uuid": "".join(str(b % 10) for b in digest[8:16]).ljust(16, "7"),
+        "device_id": "",
+        "region": "",
+        "sys_region": "",
+    }
+
+
+def v_doubao(cookie: str, account: dict) -> dict:
+    """查豆包任务面板：既判登录态，也把累计额度 / 连签天数显示出来。"""
+    params = dict(DOUBAO_PARAMS)
+    params.update(doubao_ids(account))
+    url = DOUBAO_DETAIL + "?" + urllib.parse.urlencode(params)
+    try:
+        resp = http(
+            url,
+            cookie=cookie,
+            data=json.dumps({"campaign_group_code": DOUBAO_GROUP}).encode("utf-8"),
+            method="POST",
+            headers={
+                "User-Agent": DOUBAO_UA,
+                "Origin": "https://www.doubao.com",
+                "Referer": "https://www.doubao.com/pc/agent-explore",
+                "Content-Type": "application/json",
+            },
+            timeout=15,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return unknown(f"请求豆包接口失败：{exc}")
+    data = _json(resp)
+    if not isinstance(data, dict):
+        return unknown(f"豆包接口返回了非 JSON 内容（HTTP {resp.status}），可能被风控拦截")
+    code = int(data.get("code") or 0)
+    if code == DOUBAO_LOGIN_INVALID:
+        return bad("豆包登录已过期（Cookie 失效），请重新扫码授权或粘贴新的 Cookie")
+    if code == DOUBAO_NO_ACTIVITY:
+        return bad("这个豆包账号没有每日签到活动（个人账号才有，工作版 / 飞书企业账号没有）")
+    if code != 0:
+        return unknown(f"豆包任务面板返回 code={code}：{data.get('msg') or data.get('message') or ''}")
+    payload = data.get("data") or {}
+    tasks = payload.get("tasks") or []
+    task = next((t for t in tasks if isinstance(t, dict) and t.get("task_kind") == "daily_signin"), None)
+    if not task:
+        kinds = sorted({t.get("task_kind") for t in tasks if isinstance(t, dict) and t.get("task_kind")})
+        tail = f"（当前任务：{'/'.join(kinds)}）" if kinds else ""
+        return bad("这个豆包账号没有「每日签到」任务（个人账号才有）" + tail)
+    daily = task.get("daily_checkin") or {}
+    reward = daily.get("reward") or {}
+    progress = payload.get("progress") or {}
+    total = int(progress.get("total_amount") or 0)
+    days = int(daily.get("continuous_days") or 0)
+    amount = int(reward.get("reward_amount") or 0)
+    checked = daily.get("checked_in_today") is True
+    msg = f"累计 {total} 额度｜连签 {days} 天｜" + (
+        f"今日已签到（+{amount}）" if checked else f"今日可领 +{amount} 额度"
+    )
+    return ok(msg, user=None, checked_in=checked, total_amount=total, continuous_days=days)
+
+
 VERIFIERS = {
     "bilibili": v_bilibili,
     "tieba": v_tieba,
@@ -369,6 +465,7 @@ VERIFIERS = {
     "baidupan": v_baidupan,
     "aolaxing": v_aolaxing,
     "weibo": v_weibo,
+    "doubao": v_doubao,
     "enshan": _discuz("https://www.right.com.cn/forum", "恩山论坛"),
     "fnnasclub": _discuz("https://club.fnnas.com", "飞牛论坛"),
 }

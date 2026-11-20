@@ -42,6 +42,10 @@
   const esc = (v) =>
     String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  /* 扫码登录会话：sid 只在本机内存里，二维码确认后服务端才把 cookie 写进配置。
+     mode=add 新增账号，mode=renew 只替换指定账号的 cookie/seed（其它账号不动）。 */
+  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false };
+
   const STATE = {
     valid: ["valid", "有效", "有效"],
     invalid: ["invalid", "失效", "失效"],
@@ -412,7 +416,12 @@
       : "";
     // 必填字段只写在账号的字段标签上（那里离输入框最近）；这一行只说「这是个什么凭据」，
     // 同一个信息出现两次只会让人多读一遍。
+    const points = site.status && site.status.message ? `<div class="qr-meta">最近校验：${esc(site.status.message)}</div>` : "";
     return `
+  ${site.auth === "qr" ? `<div class="qr-banner">
+    <span>🫘 <b>扫码登录</b>：用手机豆包 App 扫码即可拿到登录态，到期可一键续期；下面的手动粘贴 cookie 一样可用。</span>
+    <button class="tiny primary" data-action="doubao-qr" data-key="${site.key}">扫码登录 / 添加账号</button>
+  </div>${points}` : ""}
   ${site.howto ? `<div class="howto"><b>怎么拿 cookie：</b>${esc(site.howto)}${link}</div>` : ""}
   <div class="row" style="margin:0 0 6px">
     <span class="muted" style="font-size:12px">凭据类型：${site.credential === "cookie" ? "Cookie" : "账号 / 表单"}</span>
@@ -442,6 +451,7 @@
            <textarea data-field="cookie" rows="4" spellcheck="false" placeholder="在这里粘贴 cookie 原文，支持：浏览器 Cookie 面板整块复制 / name=value; ... 串 / JSON / curl 里的 Cookie 头">${esc(account.cookie || "")}</textarea>
            <div class="row">
              <button class="tiny" data-action="normalize" data-key="${site.key}" data-index="${index}">规范化</button>
+             ${site.auth === "qr" ? `<button class="tiny" data-action="doubao-renew" data-key="${site.key}" data-index="${index}" title="登录态过期时重新扫码，只替换这个账号的 cookie 和设备种子">续期</button>` : ""}
              ${site.verify ? `<button class="tiny" data-action="verify" data-key="${site.key}">校验 cookie</button>` : ""}
              <span class="spacer"></span>
              <span class="muted" style="font-size:11.5px" data-role="count">${check ? check.count + " 个字段" : ""}</span>
@@ -618,6 +628,11 @@
 
     if (action === "open") { openSite(key); return; }
 
+    if (action === "doubao-qr" || action === "doubao-renew") {
+      openQr(key, action === "doubao-renew" ? index : null);
+      return;
+    }
+
     if (action === "add") {
       const site = findSite(key);
       const blank = {};
@@ -756,6 +771,97 @@
       toast(`${site.label}：已保存 ${accounts.length} 个账号`);
       await loadState(true);
     } catch (e) { toast("保存失败：" + e.message); }
+  }
+
+  /* ---------------- 豆包扫码登录 / token 续期 ----------------
+     二维码 60 秒过期，所以轮询里既要更新状态也要能「换一张」；确认后直接落盘，
+     renew 模式下服务端只替换该账号的 cookie/seed，别的账号不受影响。 */
+  function stopQrPoll() {
+    if (QR.timer) clearInterval(QR.timer);
+    QR.timer = null;
+  }
+
+  function paintQr(src, expires, text) {
+    if (src) $("qrImg").innerHTML = `<img src="${esc(src)}" alt="登录二维码">`;
+    $("qrStatus").textContent = text;
+    if (expires != null && expires > 0) $("qrSub").textContent = `二维码约 ${expires} 秒后过期，过期请点「换一张」`;
+  }
+
+  async function openQr(key, index) {
+    stopQrPoll();
+    QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false;
+    QR.mode = index == null ? "add" : "renew";
+    QR.index = index;
+    $("qrTitle").textContent = QR.mode === "renew" ? `续期 · 账号 ${index + 1}` : "扫码登录 · 添加账号";
+    $("qrImg").innerHTML = `<span class="muted">正在获取二维码…</span>`;
+    $("qrStatus").textContent = "正在获取二维码…";
+    $("qrSub").textContent = "用手机豆包 App 扫码，并在手机上点「确认登录」";
+    $("qrRefresh").disabled = true;
+    $("qrApply").disabled = true;
+    const dlg = $("qrDlg");
+    if (!dlg.open) dlg.showModal();
+    try {
+      const r = await api("/doubao/qr/start", { method: "POST", body: {} });
+      QR.sid = r.id;
+      if (r.auth_url) $("qrAuthLink").href = r.auth_url;
+      paintQr(r.qrcode, r.expires_in, "等待扫码");
+      $("qrRefresh").disabled = false;
+      QR.timer = setInterval(pollQr, 1500);
+    } catch (e) {
+      $("qrStatus").textContent = "获取二维码失败";
+      $("qrSub").textContent = e.message;
+      toast("获取二维码失败：" + e.message);
+    }
+  }
+
+  async function pollQr() {
+    if (!QR.sid || QR.applying) return;
+    try {
+      const r = await api(`/doubao/qr/status?id=${encodeURIComponent(QR.sid)}`);
+      const labels = { waiting: "等待扫码", scanned: "已扫码，请在手机上确认", confirmed: "登录成功", expired: "二维码已过期", error: "登录失败" };
+      if (r.qrcode) paintQr(r.qrcode, r.expires_in, labels[r.status] || "等待扫码");
+      else $("qrStatus").textContent = labels[r.status] || "等待扫码";
+      if (r.message) $("qrSub").textContent = r.message;
+      if (r.status === "confirmed") {
+        stopQrPoll();
+        QR.cookie = r.cookie;
+        QR.seed = r.seed;
+        $("qrApply").disabled = false;
+        $("qrRefresh").disabled = true;
+        await applyQr();
+      } else if (["expired", "error", "cancelled"].includes(r.status)) {
+        stopQrPoll();
+        $("qrRefresh").disabled = r.status !== "expired";
+      }
+    } catch (_) { /* 轮询抖动不弹提示，免得刷屏 */ }
+  }
+
+  async function applyQr() {
+    if (QR.applying || !QR.cookie || !QR.sid) return;
+    QR.applying = true;
+    $("qrApply").disabled = true;
+    try {
+      const r = await api("/doubao/qr/apply", {
+        method: "POST",
+        body: { id: QR.sid, index: QR.mode === "renew" ? QR.index : null },
+      });
+      S.dirty.DOUBAO = false;
+      await loadState(true);
+      if (S.dlgKey === "DOUBAO") paintSiteDialog();
+      toast((QR.mode === "renew" ? "续期成功" : "已添加账号") + (r.where ? "：" + r.where : ""));
+      $("qrDlg").close();
+    } catch (e) {
+      toast("保存失败：" + e.message);
+      $("qrApply").disabled = false;
+    } finally {
+      QR.applying = false;
+    }
+  }
+
+  function closeQr() {
+    stopQrPoll();
+    if (QR.sid) api("/doubao/qr/cancel", { method: "POST", body: { id: QR.sid } }).catch(() => {});
+    QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false;
   }
 
   /* ======================================================================
@@ -1144,6 +1250,22 @@
     $("siteDlg").addEventListener("close", onSiteDialogClosed);
     // 点弹窗外面那块变暗的区域关掉它（原生 dialog 的遮罩点击落在 dialog 自己身上）
     $("siteDlg").addEventListener("click", (ev) => { if (ev.target === $("siteDlg")) closeSite(); });
+    $("qrClose").onclick = () => $("qrDlg").close();
+    $("qrRefresh").onclick = async () => {
+      if (!QR.sid) return;
+      $("qrRefresh").disabled = true;
+      try {
+        const r = await api("/doubao/qr/refresh", { method: "POST", body: { id: QR.sid } });
+        QR.cookie = null; QR.seed = null;
+        $("qrApply").disabled = true;
+        paintQr(r.qrcode, r.expires_in, "等待扫码");
+        $("qrSub").textContent = "已换新码，请用手机豆包 App 扫描";
+        $("qrRefresh").disabled = false;
+      } catch (e) { toast("换码失败：" + e.message); $("qrRefresh").disabled = false; }
+    };
+    $("qrApply").onclick = () => applyQr();
+    $("qrDlg").addEventListener("close", closeQr);
+    $("qrDlg").addEventListener("click", (ev) => { if (ev.target === $("qrDlg")) $("qrDlg").close(); });
     $("search").oninput = render;
     $("filter").onchange = render;
     $("groupFilter").onchange = render;

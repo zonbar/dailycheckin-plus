@@ -17,6 +17,7 @@
     "BAIDU",
     "BAIDUWP",
     "BILIBILI",
+    "DOUBAO",
     "ENSHAN",
     "FNNASCLUB",
     "IMAOTAI",
@@ -49,6 +50,7 @@
   },
   "note": "引擎源码来自上游，patches/ 里的补丁在同步后自动重放。local_site_modules 里登记的站点为本项目新增，同步时保留。不要手工覆盖 dailycheckin/。",
   "local_site_modules": [
-    "weibo"
+    "weibo",
+    "doubao"
   ]
 }

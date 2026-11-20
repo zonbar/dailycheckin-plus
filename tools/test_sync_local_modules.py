@@ -148,6 +148,8 @@ try:
 
     check("引擎能加载 WEIBO", "WEIBO" in checkin_map, str(sorted(checkin_map)))
     check("类名正确", checkin_map.get("WEIBO", ("", None))[1].__name__ == "Weibo")
+    check("引擎能加载 DOUBAO", "DOUBAO" in checkin_map, str(sorted(checkin_map)))
+    check("豆包类名正确", checkin_map.get("DOUBAO", ("", None))[1].__name__ == "Doubao")
 except Exception as exc:  # noqa: BLE001
     check("引擎能加载 WEIBO", False, f"{type(exc).__name__}: {exc}")
 

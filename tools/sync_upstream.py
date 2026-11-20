@@ -68,6 +68,7 @@ SKIP_NAMES = {"__pycache__", ".DS_Store"}
 # 新增本地站点时改这里，并顺手在 panel/catalog.py 补上元数据。
 LOCAL_SITE_MODULES = {
     "weibo": "微博超话（本项目新增，走 m.weibo.cn 移动端接口）",
+    "doubao": "豆包每日签到（本项目新增，走 doubao.com campaign 接口）",
 }
 
 
