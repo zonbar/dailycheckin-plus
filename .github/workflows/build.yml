@@ -322,3 +322,14 @@ jobs:
             GIT_DATE=${{ steps.stamp.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # buildx 偶尔会把 OCI 索引推上去、却漏推它引用的平台清单：
+      # 此时 :latest 看着存在，docker pull 却报 manifest unknown。
+      # 发布后立刻把镜像拉回本地校验一遍，坏镜像当场现形，而不是等用户来报。
+      - name: 校验发布的镜像可拉取
+        run: |
+          set -e
+          echo "--- 镜像索引"
+          docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:latest"
+          echo "--- 真的拉一次（含全部平台清单与层）"
+          docker pull "ghcr.io/${{ github.repository }}:latest"
