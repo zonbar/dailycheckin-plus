@@ -339,6 +339,32 @@ finally:
 
 
 # --------------------------------------------------------------------------- #
+section("5d) 确认态不可逆：迟到的 scanned 不能把状态回退")
+sid5 = "no-regress-session"
+now5 = __import__("time").time()
+doubao_auth._SESSIONS[sid5] = {
+    "id": sid5,
+    "cookies": {"ttwid": "t", "sessionid": "stable-sid", "passport_csrf_token": "csrf"},
+    "csrf": "csrf", "token": "tok", "qrcode": "data:image/png;base64,AAAA",
+    "ttl": 55, "created": now5, "qr_at": now5, "status": "confirmed",
+    "seed": "stable-seed", "state": "confirmed",
+    "cookie": "sessionid=stable-sid;",
+}
+original_get = doubao_auth._get
+try:
+    def stale_scan(url, cookies, headers=None, follow=False, timeout=15):
+        return 200, json.dumps({"data": {"error_code": 0, "status": "scanned"}}), {}
+
+    doubao_auth._get = stale_scan
+    out = doubao_auth.status(sid5)
+    check("确认后迟到的 scanned 不会回退状态",
+          out["status"] == "confirmed" and "sessionid=stable-sid" in out.get("cookie", ""), str(out))
+finally:
+    doubao_auth._get = original_get
+    doubao_auth._SESSIONS.pop(sid5, None)
+
+
+# --------------------------------------------------------------------------- #
 section("6) 续期只动目标账号，其它账号原样保留")
 from panel import paths, runner, store
 

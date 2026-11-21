@@ -776,9 +776,17 @@
   /* ---------------- 豆包扫码登录 / token 续期 ----------------
      二维码 60 秒过期，所以轮询里既要更新状态也要能「换一张」；确认后直接落盘，
      renew 模式下服务端只替换该账号的 cookie/seed，别的账号不受影响。 */
+  /* 串行轮询：必须上一次请求结束后再排下一次。用 setInterval 会在 NAS 网络
+     较慢时叠加并发请求，同一个二维码 token 被同时查询，豆包会返回异常响应，
+     表现为手机已确认、面板却一直停在「等待扫码」。 */
   function stopQrPoll() {
-    if (QR.timer) clearInterval(QR.timer);
+    if (QR.timer) clearTimeout(QR.timer);
     QR.timer = null;
+  }
+
+  function scheduleQrPoll() {
+    if (QR.timer) clearTimeout(QR.timer);
+    QR.timer = setTimeout(pollQr, 1500);
   }
 
   function paintQr(src, expires, text) {
@@ -806,7 +814,7 @@
       if (r.auth_url) $("qrAuthLink").href = r.auth_url;
       paintQr(r.qrcode, r.expires_in, "等待扫码");
       $("qrRefresh").disabled = false;
-      QR.timer = setInterval(pollQr, 1500);
+      scheduleQrPoll();
     } catch (e) {
       $("qrStatus").textContent = "获取二维码失败";
       $("qrSub").textContent = e.message;
@@ -830,9 +838,12 @@
         $("qrApply").disabled = false;
         $("qrRefresh").disabled = true;
         await applyQr();
-      } else if (["expired", "error", "cancelled"].includes(r.status)) {
+        return;
+      }
+      if (["expired", "error", "cancelled"].includes(r.status)) {
         stopQrPoll();
         $("qrRefresh").disabled = r.status !== "expired";
+        return;
       }
     } catch (e) {
       // 偶发抖动不弹提示；连续失败才可见，否则用户会以为「点了确认没反应」
@@ -842,6 +853,7 @@
         $("qrSub").textContent = (e && e.message) || "请检查面板网络后重试";
       }
     }
+    if (QR.sid && !QR.applying) scheduleQrPoll();
   }
 
   async function applyQr() {

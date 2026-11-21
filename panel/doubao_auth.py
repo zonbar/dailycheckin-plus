@@ -274,11 +274,15 @@ def status(sid: str) -> dict:
     # 网络请求不持锁：轮询等接口时，「取消 / 换码」仍能立刻响应。
     nxt = urllib.parse.quote(BASE, safe="")
     url = f"{BASE}/passport/web/check_qrconnect/?next={nxt}&token={token}&aid={AID}"
-    _, body, new = _get(url, cookies, headers={"x-tt-passport-csrf-token": csrf})
-    data = _json(body) or {}
-    inner = data.get("data") or {}
-    raw_code = inner.get("error_code", data.get("error_code", 0))
-    code = int(raw_code) if raw_code not in (None, "") else 0
+    http_code, body, new = _get(url, cookies, headers={"x-tt-passport-csrf-token": csrf})
+    data = _json(body)
+    # 网络失败 / 非 JSON 响应必须显式报 error。以前静默当 new 处理，前端会
+    # 一直停在「等待扫码」，手机确认了也看不出来，正是「没反应」的假象来源。
+    net_error = ""
+    if http_code == 0:
+        net_error = f"网络请求失败：{str(body)[:120]}"
+    elif not isinstance(data, dict):
+        net_error = f"passport 返回异常（HTTP {http_code}）"
 
     with _LOCK:
         one = _SESSIONS.get(sid)
@@ -289,6 +293,13 @@ def status(sid: str) -> dict:
         qr_at = one["qr_at"]
         remaining = max(0, int(POLL_WINDOW - (time.time() - qr_at)))
 
+        if net_error:
+            # 不立即判死：连续失败由前端 failStreak 计数，偶发抖动可自恢复。
+            return {"status": one["status"], "expires_in": remaining, "message": net_error}
+
+        inner = data.get("data") or {}
+        raw_code = inner.get("error_code", data.get("error_code", 0))
+        code = int(raw_code) if raw_code not in (None, "") else 0
         if code != 0:
             desc = str(inner.get("description") or data.get("message") or "")
             if "expired" in desc.lower() or "过期" in desc:
@@ -300,6 +311,19 @@ def status(sid: str) -> dict:
             }
         state = str(inner.get("status") or "")
         one["state"] = state
+        # 状态单向：confirmed 不可逆。并发轮询时，确认前发出的请求可能稍后
+        # 才返回 scanned，若照单赋值会把已确认状态覆盖回去，前端就一直显示
+        # 「已扫码请确认」，表现为手机确认了面板却没反应。
+        if one["status"] == "confirmed":
+            return {
+                "status": "confirmed",
+                "cookie": one["cookie"],
+                "seed": one["seed"],
+                "expires_in": 0,
+            }
+        # message 里始终带上 passport 的原始状态，方便在 NAS 上定位
+        # 「手机确认了面板却不动」——一眼能看出服务端到底回的 new/scanned/confirmed。
+        raw_tag = f"[passport: status={state or '空'}, code={code}]"
         if state == "new":
             one["status"] = "waiting"
             msg = "等待扫码（请用手机豆包 App 扫描）"
@@ -353,7 +377,8 @@ def status(sid: str) -> dict:
             msg = "二维码已过期，请点「换一张」"
         else:
             msg = f"扫码状态：{state or '未知'}"
-        return {"status": one["status"], "expires_in": remaining, "message": msg}
+        return {"status": one["status"], "expires_in": remaining,
+                "message": f"{msg} {raw_tag}"}
 
 
 def refresh(sid: str) -> dict:
