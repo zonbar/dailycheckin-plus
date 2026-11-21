@@ -13,6 +13,10 @@
 二维码 TTL 只有 60 秒，所以面板的「换一张」是重新取码而不是复用旧码。
 每个账号的登录会话互相隔离：Cookie 罐、csrf、token、seed 都存在各自的会话对象里；
 seed 在换码 / 续期时保持不变，保证设备号稳定、不会被当成新设备。
+
+``check_qrconnect`` 返回 ``error_code=2046``（「为保证账号安全，暂不支持此操作」）
+是豆包 passport 的**风控二次验证**，不是二维码状态解析失败。此时会话切到
+``verify`` 态并把等待窗口放宽到 10 分钟，用户完成 App / 网页验证后继续轮询同一张码。
 """
 
 from __future__ import annotations
@@ -44,8 +48,10 @@ AID = "497858"
 AUTH_URL = "https://www.doubao.com/chat/"
 
 QR_TTL = 55          # 二维码展示倒计时（服务端给 60 秒，留 5 秒余量）
-POLL_WINDOW = 180    # 轮询窗口：手机扫码后用户可能过一会儿才点确认，给足时间
-SESSION_TTL = 600    # 登录会话最长保留 10 分钟（含已确认待保存的结果）
+POLL_WINDOW = 180    # 普通轮询窗口：手机扫码后用户可能过一会儿才点确认
+SECURITY_VERIFY = 2046  # passport 风控二次验证：为保证账号安全，暂不支持此操作
+VERIFY_WINDOW = 600  # 触发 2046 后放宽到 10 分钟，够用户在 App / 网页完成验证
+SESSION_TTL = 900    # 登录会话最长保留 15 分钟（含已确认待保存的结果）
 POLL_TIMEOUT = 15
 
 _LOCK = threading.RLock()
@@ -144,6 +150,37 @@ def _json(text: str):
         return None
 
 
+def _passport_query(cookies: dict, **extra) -> str:
+    """拼一份贴近浏览器 js-sdk 的 passport 公共参数。
+
+    真实登录弹窗还会带 `sign` / `qs` / `a_bogus`，但扫码链路不校验它们；
+    实测补上这些基础参数与 `fp` / `verifyFp` 后，get_qrcode / check_qrconnect
+    行为一致，同时更接近浏览器会话，减少被当成裸脚本拦下的概率。
+    """
+    params = {
+        "passport_jssdk_version": "4.4.6",
+        "passport_jssdk_type": "normal",
+        "is_from_ttaccountsdk": "1",
+        "aid": AID,
+        "language": "zh",
+        "account_app_language": "zh-CN",
+        "multi_login": "1",
+        "account_sdk_source": "web",
+        "device_platform": "web",
+        "os_type": "3",
+        "terminal_type": "2",
+    }
+    fp = str(cookies.get("s_v_web_id") or "")
+    if fp:
+        params["fp"] = fp
+        params["verifyFp"] = fp
+    biz = str(cookies.get("biz_trace_id") or "")
+    if biz:
+        params["biz_trace_id"] = biz
+    params.update(extra)
+    return urllib.parse.urlencode(params)
+
+
 def _csrf(cookies: dict) -> str:
     # 首页是 302，跟随每一跳把 ttwid / web_id 都收进来（只取第一跳会漏 Cookie）
     _, _body, new = _get(BASE + "/", cookies, follow=True)
@@ -155,13 +192,21 @@ def _csrf(cookies: dict) -> str:
     cookies.update(new)
     data = _json(body) or {}
     inner = data.get("data") or {}
+    # 浏览器在打开 chat 页时就有这两个值；裸脚本拿二维码时服务端也会下发，
+    # 但先备好可以让首张二维码的请求就跟正常浏览器会话一致。
+    if not cookies.get("s_v_web_id"):
+        cookies["s_v_web_id"] = "verify_" + "".join(
+            secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789_") for _ in range(27)
+        )
+    if not cookies.get("biz_trace_id"):
+        cookies["biz_trace_id"] = secrets.token_hex(4)
     return str(inner.get("passport_csrf_token") or cookies.get("passport_csrf_token") or "")
 
 
 def _qrcode(cookies: dict, csrf: str) -> tuple[str, str, int]:
     """返回 (token, data URI, 有效期秒)。"""
-    nxt = urllib.parse.quote(BASE, safe="")
-    url = f"{BASE}/passport/web/get_qrcode/?next={nxt}&aid={AID}"
+    query = _passport_query(cookies, next=BASE)
+    url = f"{BASE}/passport/web/get_qrcode/?{query}"
     _, body, new = _get(
         url,
         cookies,
@@ -226,6 +271,8 @@ def start() -> dict:
             "status": "waiting",
             "seed": secrets.token_hex(16),
             "state": "new",
+            "verify_at": None,
+            "security_code": None,
         }
     return {
         "id": sid,
@@ -258,11 +305,14 @@ def status(sid: str) -> dict:
         # 注意：二维码的 55 秒只是「展示倒计时」，不是轮询上限。
         # 手机扫码后用户往往还要停留几秒才点确认；以前这里按 ttl 直接判过期，
         # 导致手机确认了、面板却早已停止查询，表现为「点了确认没反应」。
-        # 现在只有服务端明确返回 expired 或超过整个轮询窗口才判过期。
+        # 触发 2046 风控时窗口再放宽到 VERIFY_WINDOW，给用户完成二次验证的时间。
         if one["status"] == "expired":
             return {"status": "expired", "expires_in": 0, "message": "二维码已过期，请点「换一张」"}
-        elapsed = time.time() - one["qr_at"]
-        if elapsed > POLL_WINDOW:
+        verifying = one["status"] == "verify"
+        window = VERIFY_WINDOW if verifying else POLL_WINDOW
+        origin = one.get("verify_at") or one["qr_at"]
+        elapsed = time.time() - origin
+        if elapsed > window:
             one["status"] = "expired"
             return {"status": "expired", "expires_in": 0, "message": "扫码等待超时，请点「换一张」重新扫码"}
         token = one["token"]
@@ -273,8 +323,8 @@ def status(sid: str) -> dict:
         qr_at = one["qr_at"]
 
     # 网络请求不持锁：轮询等接口时，「取消 / 换码」仍能立刻响应。
-    nxt = urllib.parse.quote(BASE, safe="")
-    url = f"{BASE}/passport/web/check_qrconnect/?next={nxt}&token={token}&aid={AID}"
+    query = _passport_query(cookies, next=BASE, token=token)
+    url = f"{BASE}/passport/web/check_qrconnect/?{query}"
     http_code, body, new = _get(url, cookies, headers={"x-tt-passport-csrf-token": csrf})
     data = _json(body)
     # 网络失败 / 非 JSON 响应必须显式报 error。以前静默当 new 处理，前端会
@@ -292,7 +342,10 @@ def status(sid: str) -> dict:
         one["cookies"].update(new)
         ttl = one["ttl"]
         qr_at = one["qr_at"]
-        remaining = max(0, int(POLL_WINDOW - (time.time() - qr_at)))
+        verifying = one["status"] == "verify"
+        window = VERIFY_WINDOW if verifying else POLL_WINDOW
+        origin = one.get("verify_at") or qr_at
+        remaining = max(0, int(window - (time.time() - origin)))
 
         if net_error:
             # 不立即判死：连续失败由前端 failStreak 计数，偶发抖动可自恢复。
@@ -320,6 +373,24 @@ def status(sid: str) -> dict:
         }
         one["debug"] = debug
 
+        # 2046 = 豆包 passport 风控二次验证（实测文案：
+        # 「为保证账号安全，暂不支持此操作」/「请前往豆包 App 完成验证」）。
+        # 它不是二维码解析失败，也不能靠换码解决；保持同一 token 继续轮询，
+        # 用户在手机 App 或浏览器完成验证后服务端就会放行本次登录。
+        if code == SECURITY_VERIFY:
+            one["status"] = "verify"
+            one["verify_at"] = time.time()
+            one["security_code"] = code
+            remaining = VERIFY_WINDOW
+            msg = (
+                f"豆包要求安全验证（code={code}）：请在手机豆包 App 里完成安全验证，"
+                "或在浏览器打开豆包网页用短信 / 扫码登录一次；完成后面板会自动继续。"
+                "若一直不通过，请改用下面的手动填 Cookie。"
+            )
+            if desc:
+                msg += f"（passport：{desc[:80]}）"
+            return {"status": "verify", "expires_in": remaining, "message": msg, "debug": debug}
+
         if code != 0:
             if "expired" in desc.lower() or "过期" in desc:
                 one["status"] = "expired"
@@ -327,6 +398,11 @@ def status(sid: str) -> dict:
                 "status": one["status"], "expires_in": remaining,
                 "message": desc or f"passport 返回 error_code={code}", "debug": debug,
             }
+
+        # 风控解除后 passport 会恢复正常的 new / scanned / confirmed 流程。
+        if one["status"] == "verify":
+            one["status"] = "waiting"
+            one["verify_at"] = None
 
         # 状态单向：confirmed 不可逆。并发轮询时，确认前发出的请求可能稍后
         # 才返回 scanned，若照单赋值会把已确认状态覆盖回去，前端就一直显示
@@ -425,7 +501,10 @@ def refresh(sid: str) -> dict:
         csrf = _csrf(one["cookies"])
         one["csrf"] = csrf
         token, uri, ttl = _qrcode(one["cookies"], csrf)
-        one.update({"token": token, "qrcode": uri, "ttl": ttl, "qr_at": time.time(), "status": "waiting"})
+        one.update({
+            "token": token, "qrcode": uri, "ttl": ttl, "qr_at": time.time(),
+            "status": "waiting", "verify_at": None, "security_code": None,
+        })
         return {"id": sid, "qrcode": uri, "status": "waiting", "expires_in": ttl, "auth_url": AUTH_URL}
 
 

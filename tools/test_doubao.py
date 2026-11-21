@@ -421,6 +421,68 @@ finally:
 
 
 # --------------------------------------------------------------------------- #
+section("5f) 2046 风控二次验证：不卡死、自动续等、验证后仍能确认")
+
+def _risk_session(sid, status="waiting", verify_at=None):
+    now = __import__("time").time()
+    doubao_auth._SESSIONS[sid] = {
+        "id": sid,
+        "cookies": {"ttwid": "t", "s_v_web_id": "verify_fp_123", "biz_trace_id": "abcd1234",
+                    "passport_csrf_token": "csrf"},
+        "csrf": "csrf", "token": "tok", "qrcode": "data:image/png;base64,AAAA",
+        "ttl": 55, "created": now, "qr_at": now, "status": status,
+        "seed": "risk-seed", "state": "new", "verify_at": verify_at,
+    }
+
+
+sid6 = "risk-verify-session"
+_risk_session(sid6)
+original_get = doubao_auth._get
+seen_urls = []
+try:
+    def risk_get(url, cookies, headers=None, follow=False, timeout=15):
+        seen_urls.append(url)
+        return 200, json.dumps({"data": {
+            "error_code": 2046,
+            "description": "为保证账号安全，暂不支持此操作",
+        }}), {}
+
+    doubao_auth._get = risk_get
+    out = doubao_auth.status(sid6)
+    check("2046 被识别为 verify 而不是失败", out["status"] == "verify", str(out))
+    check("2046 提示包含错误码和可操作指引",
+          "2046" in out.get("message", "") and ("安全验证" in out.get("message", "") or "手动填 Cookie" in out.get("message", "")),
+          out.get("message", ""))
+    check("2046 把等待窗口放宽到 10 分钟", 0 < out.get("expires_in", 0) <= doubao_auth.VERIFY_WINDOW, str(out))
+    check("风控响应也带原始诊断字段", out.get("debug", {}).get("code") == 2046, str(out.get("debug")))
+    check("passport 请求带浏览器风格 fp/verifyFp 参数",
+          bool(seen_urls) and "fp=verify_fp_123" in seen_urls[0] and "verifyFp=verify_fp_123" in seen_urls[0],
+          str(seen_urls[:1]))
+
+    def ok_get(url, cookies, headers=None, follow=False, timeout=15):
+        return 200, json.dumps({"data": {"error_code": 0, "status": "confirmed"}}), {}
+
+    doubao_auth._get = ok_get
+    out = doubao_auth.status(sid6)
+    check("完成安全验证后同一张码仍能确认登录", out["status"] == "confirmed", str(out))
+finally:
+    doubao_auth._get = original_get
+    doubao_auth._SESSIONS.pop(sid6, None)
+
+# 超过 10 分钟 verification 窗口才判超时，且不再发无谓请求
+sid7 = "risk-verify-timeout"
+_risk_session(sid7, status="verify",
+              verify_at=__import__("time").time() - (doubao_auth.VERIFY_WINDOW + 5))
+doubao_auth._get = lambda *a, **kw: (_ for _ in ()).throw(AssertionError("超时会话不应再请求 passport"))
+try:
+    out = doubao_auth.status(sid7)
+    check("风控等待超过 10 分钟才判超时", out["status"] == "expired", str(out))
+finally:
+    doubao_auth._get = original_get
+    doubao_auth._SESSIONS.pop(sid7, None)
+
+
+# --------------------------------------------------------------------------- #
 section("6) 续期只动目标账号，其它账号原样保留")
 from panel import paths, runner, store
 

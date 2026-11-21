@@ -822,6 +822,7 @@
     $("qrImg").innerHTML = `<span class="muted">正在获取二维码…</span>`;
     $("qrStatus").textContent = "正在获取二维码…";
     $("qrSub").textContent = "用手机豆包 App 扫码，并在手机上点「确认登录」";
+    $("qrAuthLink").textContent = "在浏览器打开豆包 ↗（点右上角「登录」）";
     paintQrDebug(null);
     $("qrRefresh").disabled = true;
     $("qrApply").disabled = true;
@@ -846,10 +847,16 @@
     try {
       const r = await api(`/doubao/qr/status?id=${encodeURIComponent(QR.sid)}`);
       QR.failStreak = 0;
-      const labels = { waiting: "等待扫码", scanned: "已扫码，请在手机上确认", confirmed: "登录成功", expired: "二维码已过期", error: "登录失败" };
+      const labels = {
+        waiting: "等待扫码", scanned: "已扫码，请在手机上确认",
+        verify: "豆包风控：需要安全验证", confirmed: "登录成功",
+        expired: "二维码已过期", error: "登录失败",
+      };
       if (r.qrcode) paintQr(r.qrcode, r.expires_in, labels[r.status] || "等待扫码");
       else $("qrStatus").textContent = labels[r.status] || "等待扫码";
       if (r.message) $("qrSub").textContent = r.message;
+      // 2046 时把弹窗里现成的官网链接改成「去完成验证」：用户不必自己猜去哪验证。
+      if (r.status === "verify") $("qrAuthLink").textContent = "在浏览器完成安全验证后继续 ↗";
       paintQrDebug(r.debug);
       if (r.status === "confirmed") {
         stopQrPoll();
