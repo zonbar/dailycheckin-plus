@@ -43,7 +43,8 @@ BASE = "https://www.doubao.com"
 AID = "497858"
 AUTH_URL = "https://www.doubao.com/chat/"
 
-QR_TTL = 55          # 服务端给 60 秒，留 5 秒余量
+QR_TTL = 55          # 二维码展示倒计时（服务端给 60 秒，留 5 秒余量）
+POLL_WINDOW = 180    # 轮询窗口：手机扫码后用户可能过一会儿才点确认，给足时间
 SESSION_TTL = 600    # 登录会话最长保留 10 分钟（含已确认待保存的结果）
 POLL_TIMEOUT = 15
 
@@ -254,9 +255,16 @@ def status(sid: str) -> dict:
                 "seed": one["seed"],
                 "expires_in": 0,
             }
-        if one["status"] == "expired" or time.time() - one["qr_at"] > one["ttl"]:
-            one["status"] = "expired"
+        # 注意：二维码的 55 秒只是「展示倒计时」，不是轮询上限。
+        # 手机扫码后用户往往还要停留几秒才点确认；以前这里按 ttl 直接判过期，
+        # 导致手机确认了、面板却早已停止查询，表现为「点了确认没反应」。
+        # 现在只有服务端明确返回 expired 或超过整个轮询窗口才判过期。
+        if one["status"] == "expired":
             return {"status": "expired", "expires_in": 0, "message": "二维码已过期，请点「换一张」"}
+        elapsed = time.time() - one["qr_at"]
+        if elapsed > POLL_WINDOW:
+            one["status"] = "expired"
+            return {"status": "expired", "expires_in": 0, "message": "扫码等待超时，请点「换一张」重新扫码"}
         token = one["token"]
         csrf = one["csrf"]
         cookies = dict(one["cookies"])
@@ -279,7 +287,7 @@ def status(sid: str) -> dict:
         one["cookies"].update(new)
         ttl = one["ttl"]
         qr_at = one["qr_at"]
-        remaining = max(0, int(ttl - (time.time() - qr_at)))
+        remaining = max(0, int(POLL_WINDOW - (time.time() - qr_at)))
 
         if code != 0:
             desc = str(inner.get("description") or data.get("message") or "")
@@ -299,13 +307,37 @@ def status(sid: str) -> dict:
             one["status"] = "scanned"
             msg = "已扫码，请在手机上点「确认登录」"
         elif state == "confirmed":
-            redirect = inner.get("redirect_url") or ""
+            # 先固化已经在手的 Cookie —— confirmed 响应自身往往会带 sessionid，
+            # redirect 只是补充；以前跟进失败就整单报错，明明已经登录成功却 saving 不了。
+            redirect = str(inner.get("redirect_url") or "")
+            hop_error = ""
             if redirect:
-                _, _, hop = _get(redirect, one["cookies"], follow=True, timeout=20)
-                one["cookies"].update(hop)
+                try:
+                    _, _, hop = _get(redirect, one["cookies"], follow=True, timeout=20)
+                    one["cookies"].update(hop)
+                except Exception as exc:  # noqa: BLE001 - redirect 失败不否定已确认的登录态
+                    hop_error = str(exc)
+            if not one["cookies"].get("sessionid"):
+                # 最后再试一次 csrf_token 接口：有些账号的 sessionid 只在 passport
+                # 域的后续响应里下发，确认当下不一定立刻出现在 Cookie 罐里。
+                try:
+                    _, _, extra = _get(
+                        f"{BASE}/passport/safe/csrf_token/?aid={AID}",
+                        one["cookies"],
+                        headers={"x-tt-passport-csrf-token": csrf},
+                    )
+                    one["cookies"].update(extra)
+                except Exception:  # noqa: BLE001
+                    pass
             if not one["cookies"].get("sessionid"):
                 one["status"] = "error"
-                return {"status": "error", "expires_in": 0, "message": "已确认登录，但没拿到 sessionid，请重新扫码"}
+                got = ",".join(sorted(one["cookies"])) or "无"
+                detail = f"；redirect 异常：{hop_error}" if hop_error else ""
+                return {
+                    "status": "error",
+                    "expires_in": 0,
+                    "message": f"已确认登录，但没拿到 sessionid（已有：{got}{detail}），请点「换一张」重试",
+                }
             pairs = [(k, v) for k, v in one["cookies"].items() if k and v]
             one["cookie"] = ck.build(pairs)
             one["status"] = "confirmed"

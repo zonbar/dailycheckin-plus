@@ -44,7 +44,7 @@
 
   /* 扫码登录会话：sid 只在本机内存里，二维码确认后服务端才把 cookie 写进配置。
      mode=add 新增账号，mode=renew 只替换指定账号的 cookie/seed（其它账号不动）。 */
-  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false };
+  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0 };
 
   const STATE = {
     valid: ["valid", "有效", "有效"],
@@ -789,7 +789,7 @@
 
   async function openQr(key, index) {
     stopQrPoll();
-    QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false;
+    QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false; QR.failStreak = 0;
     QR.mode = index == null ? "add" : "renew";
     QR.index = index;
     $("qrTitle").textContent = QR.mode === "renew" ? `续期 · 账号 ${index + 1}` : "扫码登录 · 添加账号";
@@ -818,6 +818,7 @@
     if (!QR.sid || QR.applying) return;
     try {
       const r = await api(`/doubao/qr/status?id=${encodeURIComponent(QR.sid)}`);
+      QR.failStreak = 0;
       const labels = { waiting: "等待扫码", scanned: "已扫码，请在手机上确认", confirmed: "登录成功", expired: "二维码已过期", error: "登录失败" };
       if (r.qrcode) paintQr(r.qrcode, r.expires_in, labels[r.status] || "等待扫码");
       else $("qrStatus").textContent = labels[r.status] || "等待扫码";
@@ -833,7 +834,14 @@
         stopQrPoll();
         $("qrRefresh").disabled = r.status !== "expired";
       }
-    } catch (_) { /* 轮询抖动不弹提示，免得刷屏 */ }
+    } catch (e) {
+      // 偶发抖动不弹提示；连续失败才可见，否则用户会以为「点了确认没反应」
+      QR.failStreak = (QR.failStreak || 0) + 1;
+      if (QR.failStreak >= 3) {
+        $("qrStatus").textContent = "查询扫码状态失败";
+        $("qrSub").textContent = (e && e.message) || "请检查面板网络后重试";
+      }
+    }
   }
 
   async function applyQr() {

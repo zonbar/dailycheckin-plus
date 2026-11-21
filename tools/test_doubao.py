@@ -266,6 +266,79 @@ finally:
 
 
 # --------------------------------------------------------------------------- #
+section("5b) 手机稍晚点确认：二维码过期后仍能拿到登录态")
+sid2 = "late-confirm-session"
+old_at = __import__("time").time() - 90  # 已超过二维码 55 秒 TTL，但没到 180 秒轮询窗口
+doubao_auth._SESSIONS[sid2] = {
+    "id": sid2,
+    "cookies": {"ttwid": "t", "sessionid": "late-sid", "passport_csrf_token": "csrf"},
+    "csrf": "csrf", "token": "tok", "qrcode": "data:image/png;base64,AAAA",
+    "ttl": 55, "created": old_at, "qr_at": old_at, "status": "scanned",
+    "seed": "late-seed", "state": "scanned",
+}
+original_get = doubao_auth._get
+try:
+    def late_get(url, cookies, headers=None, follow=False, timeout=15):
+        if "check_qrconnect" in url:
+            return 200, json.dumps({"data": {"error_code": 0, "status": "confirmed"}}), {}
+        return 200, "{}", {}
+
+    doubao_auth._get = late_get
+    out = doubao_auth.status(sid2)
+    check("超过二维码 TTL 后手机确认，仍能导出登录态",
+          out["status"] == "confirmed" and "sessionid=late-sid" in out.get("cookie", ""), str(out))
+finally:
+    doubao_auth._get = original_get
+    doubao_auth._SESSIONS.pop(sid2, None)
+
+# 超过整个轮询窗口才真正判过期
+sid3 = "timeout-session"
+too_old = __import__("time").time() - (doubao_auth.POLL_WINDOW + 5)
+doubao_auth._SESSIONS[sid3] = {
+    "id": sid3,
+    "cookies": {"ttwid": "t"}, "csrf": "csrf", "token": "tok",
+    "qrcode": "data:image/png;base64,AAAA", "ttl": 55,
+    "created": too_old, "qr_at": too_old, "status": "waiting",
+    "seed": "timeout-seed", "state": "new",
+}
+out = doubao_auth.status(sid3)
+check("超过整个轮询窗口才判超时", out["status"] == "expired", str(out))
+doubao_auth._SESSIONS.pop(sid3, None)
+
+
+# --------------------------------------------------------------------------- #
+section("5c) redirect 跟进失败不否定已确认的登录态")
+sid4 = "redirect-fail-session"
+now4 = __import__("time").time()
+doubao_auth._SESSIONS[sid4] = {
+    "id": sid4,
+    "cookies": {"ttwid": "t", "sessionid": "redirect-sid", "passport_csrf_token": "csrf"},
+    "csrf": "csrf", "token": "tok", "qrcode": "data:image/png;base64,AAAA",
+    "ttl": 55, "created": now4, "qr_at": now4, "status": "waiting",
+    "seed": "redirect-seed", "state": "new",
+}
+original_get = doubao_auth._get
+try:
+    def broken_redirect(url, cookies, headers=None, follow=False, timeout=15):
+        if "check_qrconnect" in url:
+            return 200, json.dumps({
+                "data": {"error_code": 0, "status": "confirmed",
+                         "redirect_url": "https://example.invalid/cb"},
+            }), {}
+        if "example.invalid" in url:
+            return 0, "network down", {}
+        return 200, "{}", {}
+
+    doubao_auth._get = broken_redirect
+    out = doubao_auth.status(sid4)
+    check("redirect 跟进失败但已有 sessionid，仍算登录成功",
+          out["status"] == "confirmed" and "sessionid=redirect-sid" in out.get("cookie", ""), str(out))
+finally:
+    doubao_auth._get = original_get
+    doubao_auth._SESSIONS.pop(sid4, None)
+
+
+# --------------------------------------------------------------------------- #
 section("6) 续期只动目标账号，其它账号原样保留")
 from panel import paths, runner, store
 
