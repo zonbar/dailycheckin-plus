@@ -48,6 +48,13 @@ check("面板校验与引擎共用同一份设备号和接口常量",
       and verify.DOUBAO_DETAIL == doubao_spec.DETAIL_URL
       and verify.DOUBAO_PARAMS == doubao_spec.COMMON_PARAMS,
       str(verify.doubao_ids({"seed": "seed-A"})))
+with open(os.path.join(ROOT, "Dockerfile"), encoding="utf-8") as f:
+    _dockerfile = f.read()
+with open(os.path.join(ROOT, "setup.py"), encoding="utf-8") as f:
+    _setup_src = f.read()
+check("镜像构建会把共享规格模块装进 site-packages",
+      "COPY doubao_spec.py ./" in _dockerfile and 'py_modules=["doubao_spec"]' in _setup_src,
+      "Dockerfile/setup.py 缺少 doubao_spec 声明")
 url = engine.api_url(engine.DETAIL_URL, "seed-A")
 check("接口 URL 带 aid / scene 所需公共参数", "aid=497858" in url and "web_id=" in url, url)
 check("设备号不同 → URL 不同", engine.api_url(engine.DETAIL_URL, "seed-B") != url)
