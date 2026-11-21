@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -50,6 +51,36 @@ section("2) Cookie 解析保留值里的 =")
 parsed = engine.parse_cookie("sessionid=abc==; ttwid=x=y; msToken=ok")
 check("sessionid 的 == 没被截断", parsed.get("sessionid") == "abc==", str(parsed))
 check("普通等号值也没被截断", parsed.get("ttwid") == "x=y", str(parsed))
+
+
+# --------------------------------------------------------------------------- #
+section("2b) 账号级并发锁：同一账号串行，不同账号并行")
+check("不同账号的锁文件不同", engine.lock_path("seed-A") != engine.lock_path("seed-B"))
+check("同一账号的锁文件稳定", engine.lock_path("seed-A") == engine.lock_path("seed-A"))
+if engine.fcntl is not None:
+    result = []
+
+    def _try_lock(name: str, timeout: float) -> None:
+        try:
+            with engine.account_lock(name, timeout=timeout):
+                result.append("acquired")
+        except ValueError:
+            result.append("timeout")
+
+    with engine.account_lock("lock-test", timeout=2):
+        t = threading.Thread(target=_try_lock, args=("lock-test", 0.3))
+        t.start()
+        t.join(3)
+    check("同一账号被锁住时不会并发进入", result == ["timeout"], str(result))
+
+    result.clear()
+    with engine.account_lock("lock-test", timeout=2):
+        t = threading.Thread(target=_try_lock, args=("lock-other", 0.3))
+        t.start()
+        t.join(3)
+    check("不同账号互不阻塞", result == ["acquired"], str(result))
+else:  # pragma: no cover - 非 POSIX 平台只做降级验证
+    check("无 fcntl 时降级为无锁但不报错", bool(engine.account_lock("x")))
 
 
 # --------------------------------------------------------------------------- #
@@ -147,6 +178,34 @@ finally:
 
 # --------------------------------------------------------------------------- #
 section("5) 扫码状态机与 cookie 导出（全部用假响应）")
+check("授权入口指向 chat 页而不是不存在的 login 页",
+      doubao_auth.AUTH_URL == "https://www.doubao.com/chat/", doubao_auth.AUTH_URL)
+
+# error_code=0 是合法值：曾经被 `0 or -1` 误判成获取失败，NAS 上因此拿不到二维码。
+_original_qr_get = doubao_auth._get
+try:
+    doubao_auth._get = lambda *a, **kw: (
+        200,
+        json.dumps({"data": {"error_code": 0, "token": "qr-token",
+                             "qrcode": "data:image/png;base64,AAAA",
+                             "expire_time": 1795246599}}),
+        {},
+    )
+    token, uri, ttl = doubao_auth._qrcode({}, "csrf")
+    check("error_code=0 的二维码响应被正确解析", token == "qr-token" and uri.startswith("data:image/png"), f"{token} {uri[:30]}")
+    check("绝对时间戳过期时间回落到默认 TTL", ttl == doubao_auth.QR_TTL, str(ttl))
+
+    doubao_auth._get = lambda *a, **kw: (
+        200, json.dumps({"data": {"error_code": 3, "description": "缺少参数"}}), {}
+    )
+    try:
+        doubao_auth._qrcode({}, "csrf")
+        check("真实错误码仍会被抛出", False)
+    except ValueError as exc:
+        check("真实错误码仍会被抛出", "缺少参数" in str(exc), str(exc))
+finally:
+    doubao_auth._get = _original_qr_get
+
 sid = "fake-session"
 qr_at = __import__("time").time()
 doubao_auth._SESSIONS[sid] = {

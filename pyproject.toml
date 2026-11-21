@@ -1,6 +1,6 @@
 [project]
 name = "dailycheckin"
-version = "25.12.9"
+version = "1.0.2"
 dependencies = [
     "pycryptodome==3.17",
     "requests~=2.25.1",

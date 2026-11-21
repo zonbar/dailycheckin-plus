@@ -1,6 +1,8 @@
 """豆包扫码登录：拿授权二维码 → 轮询确认 → 导出登录 Cookie。
 
-整条链路是豆包 passport 的纯 HTTP 接口，**不需要浏览器、不需要额外依赖**：
+整条链路是豆包 passport 的纯 HTTP 接口，**不需要浏览器、不需要额外依赖**。
+二维码来自``https://www.doubao.com/chat/``页面右上角「登录」弹出的登录框；
+豆包没有独立的 login 页面，所以 ``AUTH_URL`` 指向 chat 页，浏览器打开后点「登录」即可。
 
 1. ``GET /``                              → ttwid / web_id 等基础 Cookie（302 要手动跟）
 2. ``GET /passport/safe/csrf_token/``     → passport_csrf_token
@@ -39,7 +41,7 @@ __all__ = [
 
 BASE = "https://www.doubao.com"
 AID = "497858"
-AUTH_URL = "https://www.doubao.com/chat/login"
+AUTH_URL = "https://www.doubao.com/chat/"
 
 QR_TTL = 55          # 服务端给 60 秒，留 5 秒余量
 SESSION_TTL = 600    # 登录会话最长保留 10 分钟（含已确认待保存的结果）
@@ -167,7 +169,10 @@ def _qrcode(cookies: dict, csrf: str) -> tuple[str, str, int]:
     cookies.update(new)
     data = _json(body) or {}
     inner = data.get("data") or {}
-    code = int(inner.get("error_code", data.get("error_code", -1)) or -1)
+    # 注意：error_code 合法值就是 0，不能写成 `inner.get(...) or -1`——
+    # 那样会把正常的 0 当成假值，误判成「获取失败」（NAS 上拿不到二维码的根因）。
+    raw_code = inner.get("error_code", data.get("error_code", -1))
+    code = int(raw_code) if raw_code not in (None, "") else -1
     if code != 0:
         raise ValueError(f"获取豆包二维码失败（error_code={code}）：{inner.get('description') or data.get('message') or ''}")
     token = str(inner.get("token") or "")
@@ -264,7 +269,8 @@ def status(sid: str) -> dict:
     _, body, new = _get(url, cookies, headers={"x-tt-passport-csrf-token": csrf})
     data = _json(body) or {}
     inner = data.get("data") or {}
-    code = int(inner.get("error_code", data.get("error_code", 0)) or 0)
+    raw_code = inner.get("error_code", data.get("error_code", 0))
+    code = int(raw_code) if raw_code not in (None, "") else 0
 
     with _LOCK:
         one = _SESSIONS.get(sid)

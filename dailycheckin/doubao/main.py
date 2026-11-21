@@ -18,9 +18,17 @@
 import hashlib
 import json
 import os
+import tempfile
+import time
 import urllib.parse
+from contextlib import contextmanager
 
 import requests
+
+try:  # 目标是 Linux 容器 / NAS；非 POSIX 平台退化成不加锁，功能不受影响
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from dailycheckin import CheckIn
 
@@ -79,6 +87,48 @@ def api_url(base: str, seed: str) -> str:
     params = dict(COMMON_PARAMS)
     params.update(device_ids(seed))
     return base + "?" + urllib.parse.urlencode(params)
+
+
+LOCK_TIMEOUT = 120
+
+
+def _lock_dir() -> str:
+    """锁文件放运行时数据目录；面板起的进程和命令行进程会拿到同一个目录。"""
+    home = os.environ.get("DC_HOME", "").strip()
+    base = (
+        os.path.join(home, "data", "locks")
+        if home
+        else os.path.join(tempfile.gettempdir(), "dailycheckin-doubao-locks")
+    )
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def lock_path(seed: str) -> str:
+    """每个账号（seed）一个锁文件，账号之间互不阻塞。"""
+    digest = hashlib.sha256(("doubao-lock:" + str(seed or "")).encode("utf-8")).hexdigest()
+    return os.path.join(_lock_dir(), digest[:32] + ".lock")
+
+
+@contextmanager
+def account_lock(seed: str, timeout: float = LOCK_TIMEOUT):
+    """跨进程串行化同一账号的签到，避免手动点击与定时任务同时打写接口。"""
+    with open(lock_path(seed), "a+") as fh:
+        if fcntl is not None:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise ValueError("同一豆包账号的签到正在进行中，请稍后再试")
+                    time.sleep(0.1)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def parse_cookie(cookie: str) -> dict:
@@ -171,38 +221,39 @@ class Doubao(CheckIn):
         }
 
     def checkin(self) -> dict:
-        """领取签到额度。detail 说今天已签就不打写接口，避免无谓请求。"""
-        state = self.status()
-        if state["checked_in"]:
-            return {"signed": False, "already": True, "credit": 0, "state": state}
-        data = self._post(
-            api_url(CHECKIN_URL, self.seed),
-            {"scene": CAMPAIGN_GROUP},
-        )
-        code = int(data.get("code") or 0)
-        if code == LOGIN_INVALID:
-            raise ValueError("豆包登录已过期（Cookie 失效），请重新扫码授权或粘贴新的 Cookie")
-        if code == NO_ACTIVITY:
-            raise ValueError("豆包说这个账号今天没有可领的签到活动（个人账号才有）")
-        if code != 0:
-            raise ValueError(f"豆包签到失败：{data.get('msg') or data.get('message') or ''}（code {code}）")
-        payload = data.get("data") or {}
-        if payload.get("idempotent") is True:
-            return {"signed": False, "already": True, "credit": 0, "state": state}
-        credit = int(payload.get("reward_amount") or state["reward_amount"] or 0)
-        days = int(payload.get("continuous_days") or state["continuous_days"] or 0)
-        total = int(state["total_amount"] or 0) + credit
-        return {
-            "signed": True,
-            "already": False,
-            "credit": credit,
-            "state": {
-                "checked_in": bool(payload.get("checked_in", True)),
-                "continuous_days": days,
-                "reward_amount": credit,
-                "total_amount": total,
-            },
-        }
+        """领取签到额度。同一账号加跨进程锁，且已签就不打写接口。"""
+        with account_lock(self.seed):
+            state = self.status()
+            if state["checked_in"]:
+                return {"signed": False, "already": True, "credit": 0, "state": state}
+            data = self._post(
+                api_url(CHECKIN_URL, self.seed),
+                {"scene": CAMPAIGN_GROUP},
+            )
+            code = int(data.get("code") or 0)
+            if code == LOGIN_INVALID:
+                raise ValueError("豆包登录已过期（Cookie 失效），请重新扫码授权或粘贴新的 Cookie")
+            if code == NO_ACTIVITY:
+                raise ValueError("豆包说这个账号今天没有可领的签到活动（个人账号才有）")
+            if code != 0:
+                raise ValueError(f"豆包签到失败：{data.get('msg') or data.get('message') or ''}（code {code}）")
+            payload = data.get("data") or {}
+            if payload.get("idempotent") is True:
+                return {"signed": False, "already": True, "credit": 0, "state": state}
+            credit = int(payload.get("reward_amount") or state["reward_amount"] or 0)
+            days = int(payload.get("continuous_days") or state["continuous_days"] or 0)
+            total = int(state["total_amount"] or 0) + credit
+            return {
+                "signed": True,
+                "already": False,
+                "credit": credit,
+                "state": {
+                    "checked_in": bool(payload.get("checked_in", True)),
+                    "continuous_days": days,
+                    "reward_amount": credit,
+                    "total_amount": total,
+                },
+            }
 
     def run(self) -> dict:
         return self.checkin()
