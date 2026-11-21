@@ -12,6 +12,8 @@ import threading
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import doubao_spec
+
 from dailycheckin.doubao import main as engine
 from panel import catalog, doubao_auth, verify
 
@@ -41,6 +43,11 @@ check("同 seed 派生结果稳定", s1 == engine.device_ids("seed-A"))
 check("不同 seed 派生结果不同", s1 != engine.device_ids("seed-B"))
 
 check("手动指定 seed 优先于 Cookie", engine.account_seed({"cookie": "x=1", "seed": "mine"}) == "mine")
+check("面板校验与引擎共用同一份设备号和接口常量",
+      verify.doubao_ids({"seed": "seed-A"}) == s1
+      and verify.DOUBAO_DETAIL == doubao_spec.DETAIL_URL
+      and verify.DOUBAO_PARAMS == doubao_spec.COMMON_PARAMS,
+      str(verify.doubao_ids({"seed": "seed-A"})))
 url = engine.api_url(engine.DETAIL_URL, "seed-A")
 check("接口 URL 带 aid / scene 所需公共参数", "aid=497858" in url and "web_id=" in url, url)
 check("设备号不同 → URL 不同", engine.api_url(engine.DETAIL_URL, "seed-B") != url)

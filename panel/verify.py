@@ -17,9 +17,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import doubao_spec
+
 from . import cookies as ck
 
-__all__ = ["verify_account", "VERIFIERS", "verify_site"]
+__all__ = ["verify_account", "VERIFIERS"]
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -362,46 +364,18 @@ def v_weibo(cookie: str, account: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # 豆包
 # --------------------------------------------------------------------------- #
-DOUBAO_DETAIL = "https://www.doubao.com/alice/ug/campaign/v3/detail/"
-DOUBAO_GROUP = "pc_incentive_task_mvp_v3"
-DOUBAO_LOGIN_INVALID = 710012001
-DOUBAO_NO_ACTIVITY = 710010702
-DOUBAO_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) DoubaoDesktop/2.32.6 Chrome/147.0.7727.149 Safari/537.36"
-)
-DOUBAO_PARAMS = {
-    "version_code": "20800",
-    "language": "zh",
-    "device_platform": "web",
-    "doubao_device_platform": "web",
-    "aid": "497858",
-    "real_aid": "497858",
-    "pkg_type": "release_version",
-    "pc_version": "2.32.6",
-    "doubao_pc_version": "5.72.66",
-    "samantha_web": "1",
-    "web_platform": "desktop",
-    "use-olympus-account": "1",
-    "web_tab_id": "0",
-}
+# 与引擎共用同一份规格，避免设备号/错误码两边各写一份后悄悄漂移。
+DOUBAO_DETAIL = doubao_spec.DETAIL_URL
+DOUBAO_GROUP = doubao_spec.CAMPAIGN_GROUP
+DOUBAO_LOGIN_INVALID = doubao_spec.LOGIN_INVALID
+DOUBAO_NO_ACTIVITY = doubao_spec.NO_ACTIVITY
+DOUBAO_UA = doubao_spec.CLIENT_UA
+DOUBAO_PARAMS = doubao_spec.COMMON_PARAMS
 
 
 def doubao_ids(account: dict) -> dict:
     """和引擎同一套设备号派生规则；seed 不同 → 设备号不同，多账号不串线。"""
-    import hashlib
-
-    seed = str((account or {}).get("seed") or "").strip()
-    if not seed:
-        seed = hashlib.sha256(str((account or {}).get("cookie") or "").encode("utf-8")).hexdigest()[:32]
-    digest = hashlib.sha256(("doubao-dev:" + seed).encode("utf-8")).digest()
-    return {
-        "web_id": "76" + "".join(str(b % 10) for b in digest[:8]),
-        "tea_uuid": "".join(str(b % 10) for b in digest[8:16]).ljust(16, "7"),
-        "device_id": "",
-        "region": "",
-        "sys_region": "",
-    }
+    return doubao_spec.device_ids(doubao_spec.account_seed(account))
 
 
 def v_doubao(cookie: str, account: dict) -> dict:
@@ -489,7 +463,3 @@ def verify_account(site_key: str, account: dict, verifier: str | None = None) ->
     if not cookie.strip():
         return bad("没有填写 cookie")
     return func(cookie, account)
-
-
-def verify_site(site_key: str, accounts: list[dict], verifier: str | None = None) -> list[dict]:
-    return [verify_account(site_key, account, verifier) for account in accounts]

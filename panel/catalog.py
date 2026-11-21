@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-from . import cookies as ck
-
 # --------------------------------------------------------------------------- #
 # 站点元数据
 # --------------------------------------------------------------------------- #
@@ -426,10 +424,6 @@ def site_meta(key: str) -> dict:
 
 def required_of(key: str) -> list[str]:
     return list(site_meta(key).get("required") or [])
-
-
-def has_required(items, key: str) -> list[str]:
-    return ck.missing_required(items, required_of(key))
 
 
 def coerce_field(key: str, field_key: str, value):

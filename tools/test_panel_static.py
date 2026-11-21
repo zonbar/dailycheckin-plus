@@ -314,6 +314,29 @@ check("提示保持一句话（会进通知正文，不能写成长篇）",
       all(len(h) < 60 for _n, h in runner.ERROR_HINTS),
       [len(h) for _n, h in runner.ERROR_HINTS])
 
+# /api/state 轮询很频繁，引擎探测不能每次都 fork 一个 Python。
+class _FakeProc:
+    returncode = 0
+    stdout = "18\n"
+    stderr = ""
+
+
+_probe_calls = []
+_orig_run = runner.subprocess.run
+runner.subprocess.run = lambda *a, **kw: (_probe_calls.append(1), _FakeProc())[1]
+try:
+    runner._PROBE_CACHE["result"] = None
+    first = runner.probe_engine()
+    second = runner.probe_engine()
+    check("引擎探测结果短时复用（轮询不反复 fork）",
+          len(_probe_calls) == 1 and first == second, str(len(_probe_calls)))
+    forced = runner.probe_engine(force=True)
+    check("force 可以强制重新探测",
+          len(_probe_calls) == 2 and forced == first, str(len(_probe_calls)))
+finally:
+    runner.subprocess.run = _orig_run
+    runner._PROBE_CACHE["result"] = None
+
 print("12) 定时校验：设置页能配 cron，失效才通知")
 # 需求：按 cron 定期校验已配置站点；**全部有效时静默**，只有失效才推一条「校验提醒」。
 with open(os.path.join(ROOT, "panel", "autoverify.py"), encoding="utf-8") as f:

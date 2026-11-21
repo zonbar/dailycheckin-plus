@@ -31,56 +31,20 @@ except ImportError:  # pragma: no cover
     fcntl = None
 
 from dailycheckin import CheckIn
-
-DETAIL_URL = "https://www.doubao.com/alice/ug/campaign/v3/detail/"
-CHECKIN_URL = "https://www.doubao.com/alice/ug/campaign/landing/checkin"
-CAMPAIGN_GROUP = "pc_incentive_task_mvp_v3"
-
-LOGIN_INVALID = 710012001
-NO_ACTIVITY = 710010702
-
-TIMEOUT = 20
-
-CLIENT_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) DoubaoDesktop/2.32.6 Chrome/147.0.7727.149 Safari/537.36"
+from doubao_spec import (
+    CAMPAIGN_GROUP,
+    CLIENT_UA,
+    COMMON_PARAMS,
+    DETAIL_URL,
+    LOGIN_INVALID,
+    NO_ACTIVITY,
+    account_seed,
+    device_ids,
 )
 
-COMMON_PARAMS = {
-    "version_code": "20800",
-    "language": "zh",
-    "device_platform": "web",
-    "doubao_device_platform": "web",
-    "aid": "497858",
-    "real_aid": "497858",
-    "pkg_type": "release_version",
-    "pc_version": "2.32.6",
-    "doubao_pc_version": "5.72.66",
-    "samantha_web": "1",
-    "web_platform": "desktop",
-    "use-olympus-account": "1",
-    "web_tab_id": "0",
-}
+CHECKIN_URL = "https://www.doubao.com/alice/ug/campaign/landing/checkin"
 
-
-def device_ids(seed: str) -> dict:
-    """按账号 seed 派生一组稳定的网页设备号。seed 不同，设备号一定不同。"""
-    digest = hashlib.sha256(("doubao-dev:" + str(seed or "")).encode("utf-8")).digest()
-    return {
-        "web_id": "76" + "".join(str(b % 10) for b in digest[:8]),
-        "tea_uuid": "".join(str(b % 10) for b in digest[8:16]).ljust(16, "7"),
-        "device_id": "",
-        "region": "",
-        "sys_region": "",
-    }
-
-
-def account_seed(check_item: dict) -> str:
-    """扫码登录的账号带 seed；手动粘 Cookie 的账号用 Cookie 哈希兜底。"""
-    seed = str((check_item or {}).get("seed") or "").strip()
-    if seed:
-        return seed
-    return hashlib.sha256(str((check_item or {}).get("cookie") or "").encode("utf-8")).hexdigest()[:32]
+TIMEOUT = 20
 
 
 def api_url(base: str, seed: str) -> str:

@@ -28,6 +28,11 @@ _RUNS: dict[str, dict] = {}
 _ORDER: list[str] = []
 _STATUS: dict = {"updated": 0, "sites": {}}
 
+# /api/state 会被页面频繁轮询；探测引擎需要 fork 一个 Python 并导入全部站点模块，
+# 没必要每次都做。60 秒内复用上一次结果，代码更新后最多等 60 秒自动刷新。
+PROBE_TTL = 60.0
+_PROBE_CACHE: dict = {"at": 0.0, "result": None}
+
 PART_RE = re.compile(r"^-{5,}开始执行「(.+?)」签到-{5,}\s*$")
 OK_RE = re.compile(r"✅")
 FAIL_RE = re.compile(r"❌")
@@ -172,11 +177,6 @@ def list_runs(limit: int = 10) -> list[dict]:
         return out
 
 
-def latest_run() -> dict | None:
-    runs = list_runs(1)
-    return runs[0] if runs else None
-
-
 # --------------------------------------------------------------------------- #
 # 启动任务
 # --------------------------------------------------------------------------- #
@@ -215,17 +215,31 @@ def _finish(run: dict, status: str, exit_code: int | None = None) -> None:
     _save_runs()
 
 
-def probe_engine() -> dict:
-    """探测引擎是否可用，跑签到前先自检，失败时给出可操作的提示。"""
+def probe_engine(force: bool = False) -> dict:
+    """探测引擎是否可用，失败时给出可操作提示；结果短时缓存，避免轮询时反复 fork。"""
+    now = time.time()
+    with _LOCK:
+        cached = _PROBE_CACHE["result"]
+        if not force and cached is not None and now - _PROBE_CACHE["at"] < PROBE_TTL:
+            return cached
+
     cmd = [sys.executable, "-c", "import dailycheckin, dailycheckin.configs as c; print(len(c.checkin_map))"]
     env = dict(os.environ, PYTHONPATH=paths.HOME + os.pathsep + os.environ.get("PYTHONPATH", ""))
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=paths.HOME, env=env)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "message": f"无法执行 Python：{exc}"}
-    if proc.returncode != 0:
-        return {"ok": False, "message": (proc.stderr or proc.stdout or "").strip()[-400:]}
-    return {"ok": True, "message": f"已加载 {proc.stdout.strip()} 个站点模块"}
+        result = {"ok": False, "message": f"无法执行 Python：{exc}"}
+    else:
+        result = (
+            {"ok": False, "message": (proc.stderr or proc.stdout or "").strip()[-400:]}
+            if proc.returncode != 0
+            else {"ok": True, "message": f"已加载 {proc.stdout.strip()} 个站点模块"}
+        )
+
+    with _LOCK:
+        _PROBE_CACHE["at"] = time.time()
+        _PROBE_CACHE["result"] = result
+    return result
 
 
 def start_run(site_keys: list[str] | None = None) -> dict:
