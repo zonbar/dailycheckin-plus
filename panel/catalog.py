@@ -311,7 +311,12 @@ SITE_LINKS: dict[str, dict[str, str]] = {
     "MIMOTION": {"site": "https://www.mi.com/", "logo": "https://www.mi.com/favicon.ico"},
     "BAIDU": {"site": "https://ziyuan.baidu.com/", "logo": "https://ziyuan.baidu.com/favicon.ico"},
     "WEIBO": {"site": "https://m.weibo.cn/", "logo": "https://weibo.com/favicon.ico"},
-    "DOUBAO": {"site": "https://www.doubao.com/", "logo": "https://www.doubao.com/favicon.ico"},
+    # 官网 /favicon.ico 现在返回 HTML；真实图标在 https://www.doubao.com/ 的 head 里
+    # 声明为 lf-flow-web-cdn.doubao.com 上的 new-doubao PNG。
+    "DOUBAO": {
+        "site": "https://www.doubao.com/",
+        "logo": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/64x64.png",
+    },
 }
 
 

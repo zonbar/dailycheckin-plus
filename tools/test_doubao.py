@@ -13,7 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from dailycheckin.doubao import main as engine
-from panel import doubao_auth, verify
+from panel import catalog, doubao_auth, verify
 
 passed, failed = [], []
 
@@ -180,6 +180,10 @@ finally:
 section("5) 扫码状态机与 cookie 导出（全部用假响应）")
 check("授权入口指向 chat 页而不是不存在的 login 页",
       doubao_auth.AUTH_URL == "https://www.doubao.com/chat/", doubao_auth.AUTH_URL)
+check("ICON 指向官网 head 声明的官方 CDN PNG，而不是会返回 HTML 的 /favicon.ico",
+      catalog.SITE_LINKS["DOUBAO"]["logo"]
+      == "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/64x64.png",
+      catalog.SITE_LINKS["DOUBAO"]["logo"])
 
 # error_code=0 是合法值：曾经被 `0 or -1` 误判成获取失败，NAS 上因此拿不到二维码。
 _original_qr_get = doubao_auth._get
