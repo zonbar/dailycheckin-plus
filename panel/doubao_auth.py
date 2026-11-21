@@ -268,6 +268,7 @@ def status(sid: str) -> dict:
         token = one["token"]
         csrf = one["csrf"]
         cookies = dict(one["cookies"])
+        had_sessionid = bool(cookies.get("sessionid"))
         ttl = one["ttl"]
         qr_at = one["qr_at"]
 
@@ -300,17 +301,33 @@ def status(sid: str) -> dict:
         inner = data.get("data") or {}
         raw_code = inner.get("error_code", data.get("error_code", 0))
         code = int(raw_code) if raw_code not in (None, "") else 0
+        desc = str(inner.get("description") or data.get("message") or "")
+        state = str(inner.get("status") or "")
+        one["state"] = state
+        redirect = str(inner.get("redirect_url") or "")
+
+        # 每次轮询都把 passport 原始字段回给前端展示。手机点了确认却卡住时，
+        # 面板会直接显示服务端回的 status / code / 是否已下发 sessionid，
+        # 不用再靠猜。这是定位「确认了但没反应」的关键诊断。
+        debug = {
+            "status": state or "空",
+            "code": code,
+            "http": http_code,
+            "redirect": bool(redirect),
+            "sessionid": bool(one["cookies"].get("sessionid")),
+            "new_sid": bool(new.get("sessionid")),
+            "desc": desc[:120],
+        }
+        one["debug"] = debug
+
         if code != 0:
-            desc = str(inner.get("description") or data.get("message") or "")
             if "expired" in desc.lower() or "过期" in desc:
                 one["status"] = "expired"
             return {
-                "status": one["status"],
-                "expires_in": remaining,
-                "message": desc or f"passport 返回 error_code={code}",
+                "status": one["status"], "expires_in": remaining,
+                "message": desc or f"passport 返回 error_code={code}", "debug": debug,
             }
-        state = str(inner.get("status") or "")
-        one["state"] = state
+
         # 状态单向：confirmed 不可逆。并发轮询时，确认前发出的请求可能稍后
         # 才返回 scanned，若照单赋值会把已确认状态覆盖回去，前端就一直显示
         # 「已扫码请确认」，表现为手机确认了面板却没反应。
@@ -320,65 +337,83 @@ def status(sid: str) -> dict:
                 "cookie": one["cookie"],
                 "seed": one["seed"],
                 "expires_in": 0,
+                "debug": debug,
             }
-        # message 里始终带上 passport 的原始状态，方便在 NAS 上定位
-        # 「手机确认了面板却不动」——一眼能看出服务端到底回的 new/scanned/confirmed。
-        raw_tag = f"[passport: status={state or '空'}, code={code}]"
-        if state == "new":
-            one["status"] = "waiting"
-            msg = "等待扫码（请用手机豆包 App 扫描）"
-        elif state == "scanned":
-            one["status"] = "scanned"
-            msg = "已扫码，请在手机上点「确认登录」"
-        elif state == "confirmed":
-            # 先固化已经在手的 Cookie —— confirmed 响应自身往往会带 sessionid，
-            # redirect 只是补充；以前跟进失败就整单报错，明明已经登录成功却 saving 不了。
-            redirect = str(inner.get("redirect_url") or "")
-            hop_error = ""
-            if redirect:
-                try:
-                    _, _, hop = _get(redirect, one["cookies"], follow=True, timeout=20)
-                    one["cookies"].update(hop)
-                except Exception as exc:  # noqa: BLE001 - redirect 失败不否定已确认的登录态
-                    hop_error = str(exc)
-            if not one["cookies"].get("sessionid"):
-                # 最后再试一次 csrf_token 接口：有些账号的 sessionid 只在 passport
-                # 域的后续响应里下发，确认当下不一定立刻出现在 Cookie 罐里。
-                try:
-                    _, _, extra = _get(
-                        f"{BASE}/passport/safe/csrf_token/?aid={AID}",
-                        one["cookies"],
-                        headers={"x-tt-passport-csrf-token": csrf},
-                    )
-                    one["cookies"].update(extra)
-                except Exception:  # noqa: BLE001
-                    pass
-            if not one["cookies"].get("sessionid"):
-                one["status"] = "error"
-                got = ",".join(sorted(one["cookies"])) or "无"
-                detail = f"；redirect 异常：{hop_error}" if hop_error else ""
-                return {
-                    "status": "error",
-                    "expires_in": 0,
-                    "message": f"已确认登录，但没拿到 sessionid（已有：{got}{detail}），请点「换一张」重试",
-                }
-            pairs = [(k, v) for k, v in one["cookies"].items() if k and v]
-            one["cookie"] = ck.build(pairs)
-            one["status"] = "confirmed"
+
+        # 手机确认的三种信号（任一命中即视为已登录）：
+        #   1. status 是 confirmed/confirm/success/ok 及其变体
+        #   2. passport 给了 redirect_url
+        #   3. 本次轮询新下发了 sessionid（之前没有、现在有）
+        fresh_sid = bool(new.get("sessionid")) or (
+            not had_sessionid and bool(one["cookies"].get("sessionid"))
+        )
+        def _is_confirmed() -> bool:
+            return (
+                "confirm" in state.lower() or state.lower() in ("success", "ok")
+                or bool(redirect) or fresh_sid
+            )
+
+        if not _is_confirmed():
+            raw_tag = f"[passport: status={state or '空'}, code={code}]"
+            if state == "new":
+                one["status"] = "waiting"
+                msg = "等待扫码（请用手机豆包 App 扫描）"
+            elif state == "scanned":
+                one["status"] = "scanned"
+                msg = "已扫码，请在手机上点「确认登录」"
+            elif state == "expired":
+                one["status"] = "expired"
+                msg = "二维码已过期，请点「换一张」"
+            else:
+                msg = f"扫码状态：{state or '未知'}"
             return {
-                "status": "confirmed",
-                "cookie": one["cookie"],
-                "seed": one["seed"],
-                "expires_in": 0,
-                "message": "登录成功，点「保存」或「续期」生效",
+                "status": one["status"], "expires_in": remaining,
+                "message": f"{msg} {raw_tag}", "debug": debug,
             }
-        elif state == "expired":
-            one["status"] = "expired"
-            msg = "二维码已过期，请点「换一张」"
+
+        # ---- 已确认：导出 Cookie ----
+        # confirmed 响应自身往往已带 sessionid；redirect 只是补充。跟进失败不再
+        # 否定已确认的登录态。
+        hop_error = ""
+        if redirect:
+            try:
+                _, _, hop = _get(redirect, one["cookies"], follow=True, timeout=20)
+                one["cookies"].update(hop)
+            except Exception as exc:  # noqa: BLE001 - redirect 失败不否定已确认的登录态
+                hop_error = str(exc)
+        if not one["cookies"].get("sessionid"):
+            # 再试一次 csrf_token 接口：有些账号的 sessionid 只在 passport 域的
+            # 后续响应里下发，确认当下不一定立刻出现在 Cookie 罐里。
+            try:
+                _, _, extra = _get(
+                    f"{BASE}/passport/safe/csrf_token/?aid={AID}",
+                    one["cookies"],
+                    headers={"x-tt-passport-csrf-token": csrf},
+                )
+                one["cookies"].update(extra)
+            except Exception:  # noqa: BLE001
+                pass
+        debug["sessionid"] = bool(one["cookies"].get("sessionid"))
+
+        pairs = [(k, v) for k, v in one["cookies"].items() if k and v]
+        one["cookie"] = ck.build(pairs)
+        one["status"] = "confirmed"
+        if not one["cookies"].get("sessionid"):
+            # 没拿到 sessionid 也让按钮可用、结果可见：让用户能保存并在面板上
+            # 继续验证，而不是卡死在 scanned。诊断字段会说明缺 sessionid。
+            got = ",".join(sorted(one["cookies"])) or "无"
+            detail = f"；redirect 异常：{hop_error}" if hop_error else ""
+            msg = f"已确认，但 passport 未下发 sessionid（已有：{got}{detail}），可先保存再校验"
         else:
-            msg = f"扫码状态：{state or '未知'}"
-        return {"status": one["status"], "expires_in": remaining,
-                "message": f"{msg} {raw_tag}"}
+            msg = "登录成功，点「保存」或「续期」生效"
+        return {
+            "status": "confirmed",
+            "cookie": one["cookie"],
+            "seed": one["seed"],
+            "expires_in": 0,
+            "message": msg,
+            "debug": debug,
+        }
 
 
 def refresh(sid: str) -> dict:

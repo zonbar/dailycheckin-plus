@@ -365,6 +365,62 @@ finally:
 
 
 # --------------------------------------------------------------------------- #
+section("5e) 手机确认的多种 passport 表达都能识别（面板按钮不再卡灰）")
+
+def _fresh_session(**kw):
+    sid = "confirm-variants-" + str(kw.get("tag", "x"))
+    now = __import__("time").time()
+    doubao_auth._SESSIONS[sid] = {
+        "id": sid,
+        # 关键：扫码初始 Cookie 不带 sessionid，模拟真实起点
+        "cookies": {"ttwid": "t", "passport_csrf_token": "csrf"},
+        "csrf": "csrf", "token": "tok", "qrcode": "data:image/png;base64,AAAA",
+        "ttl": 55, "created": now, "qr_at": now, "status": kw.get("status", "scanned"),
+        "seed": "variant-seed", "state": kw.get("state", "scanned"),
+    }
+    return sid
+
+original_get = doubao_auth._get
+try:
+    # 变体 1：status 仍 scanned，但本次响应新下发 sessionid
+    sid = _fresh_session(tag="sid")
+    def fresh_sid_get(url, cookies, headers=None, follow=False, timeout=15):
+        return 200, json.dumps({"data": {"error_code": 0, "status": "scanned"}}), {"sessionid": "just-issued"}
+    doubao_auth._get = fresh_sid_get
+    out = doubao_auth.status(sid)
+    check("scanned 但新下发 sessionid 也算已确认",
+          out["status"] == "confirmed" and "sessionid=just-issued" in out.get("cookie", ""), str(out))
+    check("响应带原始诊断字段 debug",
+          out.get("debug", {}).get("sessionid") is True, str(out.get("debug")))
+    doubao_auth._SESSIONS.pop(sid, None)
+
+    # 变体 2：status 是 confirm 变体，没有 sessionid 也不卡死
+    sid = _fresh_session(tag="variant")
+    def variant_get(url, cookies, headers=None, follow=False, timeout=15):
+        return 200, json.dumps({"data": {"error_code": 0, "status": "confirm_v2"}}), {}
+    doubao_auth._get = variant_get
+    out = doubao_auth.status(sid)
+    check("status=confirm_v2 变体也算已确认", out["status"] == "confirmed", str(out))
+    check("无 sessionid 仍给出可用结果与诊断",
+          "sessionid" in out.get("cookie", "") or "未下发" in out.get("message", ""), str(out))
+    doubao_auth._SESSIONS.pop(sid, None)
+
+    # 变体 3：只给 redirect_url
+    sid = _fresh_session(tag="redirect")
+    def redirect_get(url, cookies, headers=None, follow=False, timeout=15):
+        if "check_qrconnect" in url:
+            return 200, json.dumps({"data": {"error_code": 0, "status": "new",
+                                             "redirect_url": "https://www.doubao.com/landing"}}), {}
+        return 200, "{}", {"sessionid": "from-redirect"}
+    doubao_auth._get = redirect_get
+    out = doubao_auth.status(sid)
+    check("只给 redirect_url 也算已确认", out["status"] == "confirmed", str(out))
+    doubao_auth._SESSIONS.pop(sid, None)
+finally:
+    doubao_auth._get = original_get
+
+
+# --------------------------------------------------------------------------- #
 section("6) 续期只动目标账号，其它账号原样保留")
 from panel import paths, runner, store
 

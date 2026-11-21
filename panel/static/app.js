@@ -795,6 +795,24 @@
     if (expires != null && expires > 0) $("qrSub").textContent = `二维码约 ${expires} 秒后过期，过期请点「换一张」`;
   }
 
+  // passport 原始响应直接显示在弹窗里：手机点了确认却卡住时，
+  // 一眼能看到服务端回的 status/code/是否下发 sessionid，便于当场定位。
+  function paintQrDebug(d) {
+    const el = $("qrDebug");
+    if (!el) return;
+    if (!d) { el.textContent = ""; return; }
+    const bits = [
+      `status=${d.status ?? "?"}`,
+      `code=${d.code ?? "?"}`,
+      `http=${d.http ?? "?"}`,
+      `redirect=${d.redirect ? "有" : "无"}`,
+      `sessionid=${d.sessionid ? "有" : "无"}`,
+      `new_sid=${d.new_sid ? "有" : "无"}`,
+    ];
+    if (d.desc) bits.push(`desc=${d.desc}`);
+    el.textContent = "passport: " + bits.join(" · ");
+  }
+
   async function openQr(key, index) {
     stopQrPoll();
     QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false; QR.failStreak = 0;
@@ -804,6 +822,7 @@
     $("qrImg").innerHTML = `<span class="muted">正在获取二维码…</span>`;
     $("qrStatus").textContent = "正在获取二维码…";
     $("qrSub").textContent = "用手机豆包 App 扫码，并在手机上点「确认登录」";
+    paintQrDebug(null);
     $("qrRefresh").disabled = true;
     $("qrApply").disabled = true;
     const dlg = $("qrDlg");
@@ -831,6 +850,7 @@
       if (r.qrcode) paintQr(r.qrcode, r.expires_in, labels[r.status] || "等待扫码");
       else $("qrStatus").textContent = labels[r.status] || "等待扫码";
       if (r.message) $("qrSub").textContent = r.message;
+      paintQrDebug(r.debug);
       if (r.status === "confirmed") {
         stopQrPoll();
         QR.cookie = r.cookie;
