@@ -584,6 +584,27 @@ check("优先对真实的 qrcode_image 元素截图",
       dbb._qrcode(shot) == qr_uri and shot.calls[0][0] == "Page.captureScreenshot")
 check("截图只裁二维码区域并放大 2 倍",
       shot.calls[0][1]["clip"]["width"] == 162 and shot.calls[0][1]["clip"]["scale"] == 2)
+check("截图定位只认二维码图形并排除成功页文字",
+      "svg,canvas,img[src^=" in dbb._QR_RECT_JS and "(e.innerText||'').trim()" in dbb._QR_RECT_JS)
+
+class _DoneCdp(_ShotCdp):
+    def js(self, expr):
+        # 手机确认后页面换成「圆形对勾 + 登录成功」，没有二维码图形可截。
+        return ""
+
+done = _DoneCdp()
+check("确认页不再截图带方框文字的对勾",
+      dbb._qrcode(done) == "" and not done.calls, str(done.calls))
+
+class _SmallCdp(_ShotCdp):
+    def js(self, expr):
+        if "getBoundingClientRect" in expr:
+            return json.dumps({"x": 10, "y": 20, "width": 48, "height": 48})
+        return ""
+
+small = _SmallCdp()
+check("几十像素的成功对勾不会被当成二维码截图",
+      dbb._qrcode(small) == "" and not small.calls, str(small.calls))
 svg = '<svg width="162" height="162"><rect fill="#000000"/></svg>'
 svg_uri = dbb._qr_uri(json.dumps({"mime": "image/svg+xml", "data": svg}))
 check("SVG 兜底补命名空间再编码成 data URI",
@@ -643,6 +664,15 @@ check("前端对裸 base64 二维码兜底补 data 前缀",
 check("前端显示浏览器通道失败原因", "QR.channelNote" in ui)
 check("二维码图片加载失败时给出可操作的提示",
       "addEventListener(\"error\"" in ui and "换一张" in ui)
+with open(os.path.join(ROOT, "panel", "static", "style.css"), encoding="utf-8") as f:
+    ui_css = f.read()
+check("手机确认后用面板自绘成功态，不沿用无头浏览器截图",
+      "function paintQrDone" in ui and 'paintQrDone("登录成功"' in ui
+      and ".qr-done-mark::after" in ui_css)
+check("确认分支先画成功态再保存",
+      ui.index('if (r.status === "confirmed")') < ui.index('paintQrDone("登录成功"'))
+check("成功对勾用 CSS 边框画，不依赖字体字形",
+      "border-width: 0 3px 3px 0" in ui_css and "transform: rotate(45deg)" in ui_css)
 check("手动粘贴 Cookie 入口保留", "手动粘贴 cookie" in ui)
 
 

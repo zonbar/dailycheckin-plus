@@ -219,9 +219,16 @@ _PNG_URI = "data:image/png;base64,"
 _SVG_URI = "data:image/svg+xml;base64,"
 
 # 真实二维码：162×162 内联 SVG；switcher 是 0×0 的装饰图，绝不能再取它。
+# 只截二维码图形本身（svg / img / canvas），不要截外层容器：手机确认后外层会
+# 换成「圆形对勾 + 登录成功」，容器里没中文字体的无头浏览器会把它渲染成方框，
+# 截图回传前端就成了用户看到的「对勾下面一堆方框」。图形消失时直接不回图，
+# 前端继续用上一张真二维码，等 Cookie 落地后画自己的成功态。
 _QR_RECT_JS = r"""(()=>{let e=document.querySelector('[data-testid=qrcode_image]');
-if(!e)return '';let r=e.getBoundingClientRect();
-if(r.width<40||r.height<40)return '';
+if(!e)return '';let g=e.querySelector('svg,canvas,img[src^="data:image/"]');
+if(!g){let bg=getComputedStyle(e).backgroundImage;
+if(!/url\(/.test(bg)||(e.innerText||'').trim())return '';g=e}
+let r=g.getBoundingClientRect();
+if(r.width<100||r.height<100)return '';   // 成功页的对勾只有几十像素，别当成二维码
 return JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height})})()"""
 
 _QR_JS = r"""(()=>{let s=document.querySelector('[data-testid=qrcode_image] svg');
@@ -270,7 +277,7 @@ def _qr_screenshot(cdp: CDP) -> str:
             "width": float(rect["width"]), "height": float(rect["height"]),
             "scale": 2,
         }
-        if clip["width"] < 40 or clip["height"] < 40:
+        if clip["width"] < 100 or clip["height"] < 100:
             return ""
         shot = cdp.page("Page.captureScreenshot", {
             "format": "png", "clip": clip, "captureBeyondViewport": False,

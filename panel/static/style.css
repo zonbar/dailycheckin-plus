@@ -704,6 +704,21 @@ dialog::backdrop { background: rgba(10, 14, 22, .5); backdrop-filter: blur(3px);
   overflow: hidden;
 }
 .qr-img img { width: 100%; height: 100%; image-rendering: pixelated; }
+/* 登录成功用面板自己的字体画，不能沿用无头浏览器截图：容器没中文字体时
+   截图里的「登录成功」会变成一堆方框。对勾用纯 CSS 边框画，不依赖字形。 */
+.qr-done {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  color: var(--fg); font-size: 15px; font-weight: 600;
+}
+.qr-done-mark {
+  position: relative; width: 58px; height: 58px; border-radius: 50%;
+  background: var(--brand);
+}
+.qr-done-mark::after {
+  content: ""; position: absolute; left: 19px; top: 13px;
+  width: 15px; height: 28px; border: solid #fff;
+  border-width: 0 3px 3px 0; transform: rotate(45deg);
+}
 .qr-status { font-size: 14px; font-weight: 600; color: var(--fg); }
 .qr-sub { font-size: 12px; color: var(--fg-3); margin-top: 5px; line-height: 1.5; }
 .qr-debug {

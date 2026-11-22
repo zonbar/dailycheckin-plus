@@ -859,6 +859,14 @@
     if (expires != null && expires > 0) $("qrSub").textContent = `二维码约 ${expires} 秒后过期，过期请点「换一张」`;
   }
 
+  function paintQrDone(text, sub) {
+    const box = $("qrImg");
+    box.innerHTML = '<div class="qr-done"><span class="qr-done-mark"></span><span class="qr-done-text"></span></div>';
+    box.querySelector(".qr-done-text").textContent = text;
+    $("qrStatus").textContent = text;
+    if (sub) $("qrSub").textContent = sub;
+  }
+
   // passport 原始响应直接显示在弹窗里：手机点了确认却卡住时，
   // 一眼能看到服务端回的 status/code/是否下发 sessionid，便于当场定位。
   function paintQrDebug(d) {
@@ -940,6 +948,18 @@
     try {
       const r = await api(`${qrBase()}/status?id=${encodeURIComponent(QR.sid)}`);
       QR.failStreak = 0;
+      if (r.status === "confirmed") {
+        // 手机确认后别再画浏览器截图：容器里的无头浏览器没中文字体，
+        // 成功页上的「登录成功」会被渲染成方框。这里用面板自己的字体画成功态。
+        stopQrPoll();
+        paintQrDone("登录成功", "正在保存登录态…");
+        QR.cookie = r.cookie;
+        QR.seed = r.seed;
+        $("qrApply").disabled = false;
+        $("qrRefresh").disabled = true;
+        await applyQr();
+        return;
+      }
       const labels = {
         waiting: "等待扫码", scanned: "已扫码，请在手机上确认",
         verify: "豆包风控：需要安全验证", confirmed: "登录成功",
@@ -954,15 +974,6 @@
         paintQrDebug(null);
       } else {
         paintQrDebug(r.debug);
-      }
-      if (r.status === "confirmed") {
-        stopQrPoll();
-        QR.cookie = r.cookie;
-        QR.seed = r.seed;
-        $("qrApply").disabled = false;
-        $("qrRefresh").disabled = true;
-        await applyQr();
-        return;
       }
       if (["expired", "error", "cancelled"].includes(r.status)) {
         stopQrPoll();
