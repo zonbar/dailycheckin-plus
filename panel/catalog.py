@@ -112,7 +112,7 @@ SITE_META: dict[str, dict] = {
         "required": ["TWcq_2132_auth"],
         "recommended": ["TWcq_2132_saltkey"],
         "verify": "enshan",
-        "howto": "登录 right.com.cn → F12 → Application → Cookies，Discuz 论坛需要 TWcq_2132_* 那几个字段",
+        "howto": "推荐配置弹窗「扫码登录」用 QQ 扫码自动填；手动则登录 right.com.cn → F12 → Application → Cookies，复制 TWcq_2132_* 字段",
     },
     "FNNASCLUB": {
         "label": "飞牛 NAS 论坛",
@@ -121,7 +121,7 @@ SITE_META: dict[str, dict] = {
         "required": ["pvRK_2132_auth"],
         "recommended": ["pvRK_2132_saltkey"],
         "verify": "fnnasclub",
-        "howto": "登录 club.fnnas.com → F12 → Application → Cookies，Discuz 论坛需要 pvRK_2132_* 那几个字段",
+        "howto": "推荐配置弹窗「扫码登录」用微信扫码自动填；手动则登录 club.fnnas.com → F12 → Application → Cookies，复制 pvRK_2132_* 字段",
     },
     "KGQQ": {
         "label": "全民 K 歌",

@@ -81,9 +81,19 @@ check("可扫码站点不少于 9 个", len(sb.SUPPORTED) >= 9, str(sb.SUPPORTED
 check("阿里云盘在支持列表里", "ALIYUN" in sb.SUPPORTED)
 check("全民 K 歌 / 有道云笔记已接入扫码",
       "KGQQ" in sb.SUPPORTED and "YOUDAO" in sb.SUPPORTED, str(sb.SUPPORTED))
+check("恩山 / 飞牛 NAS 论坛已接入扫码",
+      "ENSHAN" in sb.SUPPORTED and "FNNASCLUB" in sb.SUPPORTED, str(sb.SUPPORTED))
+enshan = sb.site_rule("ENSHAN")
+check("恩山走 QQ 互联，二维码在 ptlogin iframe",
+      "connect.php" in enshan["login_url"] and "xui.ptlogin2.qq.com" in enshan["qr_frame"]
+      and "qr_supported" not in enshan)
+fnnas = sb.site_rule("FNNASCLUB")
+check("飞牛走微信登录插件，取 cache 下的二维码",
+      "xigua_login" in fnnas["login_url"]
+      and any("xigua_login/cache" in s for s in fnnas["qr_selectors"])
+      and "qr_supported" not in fnnas)
 check("豆包不在通用列表（它有专用通道）", "DOUBAO" not in sb.SUPPORTED)
-check("账密站不冒充扫码入口", not any(
-    s in sb.SUPPORTED for s in ("V2EX", "ENSHAN", "FNNASCLUB")), str(sb.SUPPORTED))
+check("V2EX 仍是账密站，不冒充扫码入口", "V2EX" not in sb.SUPPORTED)
 try:
     sb.start("V2EX")
     check("账密站启动扫码会被拒", False)

@@ -212,23 +212,27 @@ RULES: dict[str, dict] = {
         "manual_howto": "登录 smzdm.com → F12 → Application → Cookies，整块复制（关键是 s）",
     },
     "ENSHAN": {
-        "login_url": "https://www.right.com.cn/forum/member.php?mod=logging&action=login",
-        "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
-        "qr_supported": False,  # Discuz 账密页，没有扫码入口
+        # Discuz 账密页没有码，但「快捷登录」里的 QQ 互联会跳到 graph.qq.com，
+        # 真码在 xui.ptlogin2.qq.com 的 iframe 里（img#qrlogin_img，87×87）。
+        "login_url": "https://www.right.com.cn/forum/connect.php?mod=login&op=init"
+        "&referer=https%3A%2F%2Fwww.right.com.cn%2Fforum%2F&statfrom=login",
+        "qr_frame": ["xui.ptlogin2.qq.com"],
+        "qr_selectors": ["#qrlogin_img", "img.qrImg"],
         "credential": "cookie",
         "domain": "right.com.cn",
-        "ready_cookies": ["auth"],
-        "hint": "请登录恩山论坛（Discuz 多为账密）；面板会自动取出登录 Cookie",
+        "ready_cookies": ["TWcq_2132_auth"],
+        "hint": "请用 QQ 手机版扫码登录恩山；面板会自动取出登录 Cookie",
         "manual_howto": "登录 right.com.cn → F12 → Application → Cookies，复制 TWcq_2132_auth 与 saltkey",
     },
     "FNNASCLUB": {
-        "login_url": "https://club.fnnas.com/member.php?mod=logging&action=login",
-        "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
-        "qr_supported": False,  # Discuz 账密页，没有扫码入口
+        # 右上角微信图标（img.qq_bind）点开的是 xigua_login 插件：
+        # plugin.php?id=xigua_login:login&qr=1 里直接挂着微信二维码（220×220）。
+        "login_url": "https://club.fnnas.com/plugin.php?id=xigua_login:login&qr=1",
+        "qr_selectors": ['img[src*="xigua_login/cache"]'],
         "credential": "cookie",
         "domain": "fnnas.com",
-        "ready_cookies": ["auth"],
-        "hint": "请登录飞牛 NAS 论坛（Discuz 多为账密）；面板会自动取出登录 Cookie",
+        "ready_cookies": ["pvRK_2132_auth"],
+        "hint": "请用微信扫码登录飞牛 NAS 论坛；面板会自动取出登录 Cookie",
         "manual_howto": "登录 club.fnnas.com → F12 → Application → Cookies，复制 pvRK_2132_* 字段",
     },
 }
