@@ -11,11 +11,17 @@ ENV LANG=C.UTF-8 \
     PANEL_PORT=8080
 
 # cron 负责定时签到，tini 负责正确回收子进程。
-# chromium 供豆包「浏览器扫码登录」使用：容器内无桌面，用无头模式打开登录弹窗，
-# 由 CDP 读二维码和 HttpOnly 的 sessionid；手动粘贴 Cookie 仍然可用。
+# 豆包扫码登录的浏览器不装进镜像（省 ~270 MiB）：只装无头浏览器运行所需的最小库，
+# 首次启动由 entrypoint 调用 panel/browser_bootstrap.py，把 chrome-headless-shell
+# 下载到 data 卷，之后一直复用，删容器不删卷就不丢。手动粘贴 Cookie 仍然可用。
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends cron tzdata tini chromium fonts-liberation; \
+    apt-get install -y --no-install-recommends \
+        cron tzdata tini fonts-liberation \
+        libglib2.0-0t64 libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+        libatspi2.0-0t64 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+        libxrandr2 libxext6 libgbm1 libasound2t64 libx11-6 libxcb1 \
+        libdbus-1-3 libexpat1 libudev1; \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo "$TZ" > /etc/timezone; \
     rm -rf /var/lib/apt/lists/*

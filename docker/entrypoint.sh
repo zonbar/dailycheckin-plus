@@ -38,6 +38,10 @@ else:
     print("[初始化] 沿用已有定时任务:", paths.CRON_PATH)
 PY
 
+# 1.5) 豆包扫码登录用的无头浏览器：镜像不带，首次启动下载到 data 卷并复用。
+# 失败只告警、不阻塞 —— 面板照常起，手动 Cookie 仍可用。
+python -m panel.browser_bootstrap
+
 # 2) 装进 cron（网页上改周期后会由面板自己重装一次）
 if command -v crontab >/dev/null 2>&1; then
     crontab "$CRON_FILE" && echo "[初始化] 定时任务已装载"

@@ -129,11 +129,20 @@ def browser_path() -> str:
         if os.path.isfile(custom) and os.access(custom, os.X_OK):
             return custom
         raise RuntimeError(f"DOUBAO_BROWSER 指向的浏览器不可执行：{custom}")
+    # 优先用首次启动时下载到持久卷里的 headless shell（见 browser_bootstrap）。
+    from .browser_bootstrap import installed_path
+
+    installed = installed_path()
+    if installed:
+        return str(installed)
     for name in BROWSERS:
         found = shutil.which(name)
         if found:
             return found
-    raise RuntimeError("没找到 Chromium/Chrome；请安装浏览器或设置 DOUBAO_BROWSER")
+    raise RuntimeError(
+        "没找到浏览器；请重启容器让首次下载完成，或设置 DOUBAO_BROWSER，"
+        "也可以在面板里手动粘贴 Cookie"
+    )
 
 
 def _free_port() -> int:

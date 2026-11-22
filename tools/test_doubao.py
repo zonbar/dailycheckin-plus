@@ -599,11 +599,81 @@ with open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8") as f:
     deps = f.read()
 with open(os.path.join(ROOT, "panel/static/app.js"), encoding="utf-8") as f:
     ui = f.read()
-check("镜像预装无头浏览器以适配 NAS Docker", "chromium" in image)
+check("镜像不再内置浏览器（首启下载到持久化卷）",
+      "chromium" not in image and "browser_bootstrap" in image)
 check("依赖包含 CDP 客户端", "websocket-client" in deps)
 check("前端先试浏览器通道再回退 passport",
       "/doubao/browser/start" in ui and "/doubao/qr/start" in ui)
 check("手动粘贴 Cookie 入口保留", "手动粘贴 cookie" in ui)
+
+
+# --------------------------------------------------------------------------- #
+section("13) 浏览器首次下载到持久卷：下载 / 幂等 / 强制刷新 / 失败降级")
+import hashlib
+import stat
+import zipfile
+from pathlib import Path
+from panel import browser_bootstrap as bb
+
+bb_tmp = tempfile.mkdtemp(prefix="dc-browser-test-")
+os.environ["DC_BROWSER_DIR"] = bb_tmp
+os.environ.pop("DOUBAO_BROWSER", None)
+_real_platform = bb.platform_key
+_real_fetch = bb._fetch_zip
+bb.platform_key = lambda: "linux64"
+bin_name = bb._BIN
+try:
+    check("持久目录落在 data 卷下而不是镜像层",
+          "/dailycheckin/data/browser" in Path(os.path.join("/dailycheckin", "data", "browser")).as_posix())
+    check("固定版本带 SHA256 校验值",
+          len(bb._CHECKSUMS.get("linux64", "")) == 64 and len(bb._CHECKSUMS.get("linux-arm64", "")) == 64)
+    check("镜像源含国内 npmmirror 与官方回退",
+          any("npmmirror" in u for u in bb._MIRRORS) and any("googleapis" in u for u in bb._MIRRORS))
+
+    fake_zip = os.path.join(bb_tmp, "fake.zip")
+    with zipfile.ZipFile(fake_zip, "w") as zf:
+        zf.writestr(f"chrome-headless-shell-linux64/{bin_name}", "#!/bin/sh\necho fake\n")
+
+    bb._fetch_zip = lambda p, v, w, log: Path(fake_zip)
+    ok1, msg1 = bb.ensure(log=lambda m: None)
+    installed = bb.installed_path()
+    check("首次 ensure 下载并落盘", ok1 and installed is not None, msg1)
+    check("下载后二进制带可执行位",
+          bool(installed) and bool(installed.stat().st_mode & stat.S_IXUSR))
+    check("浏览器路径落在自定义持久目录",
+          bool(installed) and installed.as_posix().startswith(bb_tmp))
+
+    calls = []
+    def should_not_download(*a, **k):
+        calls.append(1)
+        raise AssertionError("不该重复下载")
+    bb._fetch_zip = should_not_download
+    ok2, msg2 = bb.ensure(log=lambda m: None)
+    check("第二次 ensure 复用已下载的浏览器", ok2 and not calls, msg2)
+
+    bb._fetch_zip = lambda p, v, w, log: Path(fake_zip)
+    ok3, _ = bb.ensure(log=lambda m: None, force=True)
+    check("force=True 才重新下载", ok3 and bb.installed_path() is not None)
+
+    bb._fetch_zip = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("网络失败"))
+    ok4, msg4 = bb.ensure(log=lambda m: None, force=True)
+    check("下载失败返回 False 而不抛异常", ok4 is False and "网络失败" in msg4)
+    check("下载失败后仍保留上一次的浏览器", bb.installed_path() is not None)
+
+    # 自动发现：browser_path 找到持久卷里的浏览器
+    from panel import doubao_browser as dbb2
+    check("浏览器通道能自动发现持久卷里的 shell",
+          dbb2.browser_path() == str(bb.installed_path()))
+
+    # CLI 入口恒返回 0（不阻塞面板）
+    rc = bb.main()
+    check("引导 CLI 失败也返回 0（不阻塞启动）", rc == 0)
+finally:
+    bb.platform_key = _real_platform
+    bb._fetch_zip = _real_fetch
+    os.environ.pop("DC_BROWSER_DIR", None)
+    import shutil
+    shutil.rmtree(bb_tmp, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------- #

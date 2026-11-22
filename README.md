@@ -176,7 +176,9 @@ cookie 等于账号密码，**别外发** —— 它只存在你本机的 `confi
    * 二维码约 60 秒会被页面自动替换，面板轮询时同步更新；也可点「换一张」重新打开登录窗。
    * 换码 / 续期沿用同一个账号的「设备种子」，设备号不会乱跳。
    * 每次登录都用全新的浏览器 profile 和调试端口，不会串到上一个账号的登录态。
-   * 飞牛 NAS 自带 Docker 可直接用：镜像已内置无头浏览器，无需桌面环境；自行构建镜像时若想指定浏览器，可设环境变量 `DOUBAO_BROWSER` 指向可执行文件。
+   * **首次启动容器时下载一次无头浏览器**（约 120 MiB）；镜像本身不带浏览器，所以镜像小很多。浏览器装在 `/dailycheckin/data/browser/`，这是挂载卷 —— **删容器不会删浏览器**，下次启动 / 换镜像版本都直接复用，不用重新下载。首启日志会打印 `[浏览器] ...` 的下载进度。
+   * 下载失败（比如容器访问不到下载源）只会告警、不影响面板启动，手动 Cookie 照常可用；也可以自己把 `chrome-headless-shell` 放到 `/dailycheckin/data/browser/chrome-headless-shell-linux64/` 并加上可执行权限。
+   * 想换浏览器版本 / 走自建源：设 `DOUBAO_BROWSER_VERSION` 与 `DOUBAO_BROWSER_SHA256`（非默认版本必须给校验值），或用 `DOUBAO_BROWSER` 直接指向本机已有的浏览器；设 `DOUBAO_BROWSER_FORCE=1` 可强制重下。飞牛 NAS 自带 Docker 无需桌面环境即可使用。
 2. **手动填 Cookie**：登录 <https://www.doubao.com/> → `F12` → Application → Cookies → `doubao.com`，整块复制进输入框（**必须含 `sessionid`**）。原来的粘贴 / 规范化 / 校验流程全部保留。
 
 **Token 续期**：Cookie 过期后，在该账号那一行点「续期」重新扫码即可 —— 服务端只替换这个账号的 `cookie` 和 `seed`，其它账号和字段原样不动。也可以直接重新粘贴新 Cookie 保存。
@@ -204,8 +206,12 @@ cookie 等于账号密码，**别外发** —— 它只存在你本机的 `confi
 | `PANEL_REPO` | `BeacherZ/dailycheckin-plus` | 「关于本项目」里的链接、以及「要不要更新」的比对对象，换成自己的 fork 即可 |
 | `PANEL_GH_TOKEN` | 空 | 访问 GitHub 接口时带上它，避免匿名限流（60 次/小时/IP） |
 | `DC_HOME` | `/dailycheckin` | 工作目录，一般不用改 |
+| `DOUBAO_BROWSER` | 空 | 直接指定已有的 Chromium / headless shell 可执行文件，设了就不自动下载 |
+| `DOUBAO_BROWSER_VERSION` | `158.0.8127.36` | 首次下载的 headless shell 版本；改版本要同时给 `DOUBAO_BROWSER_SHA256` |
+| `DOUBAO_BROWSER_SHA256` | 空（内置已知版本的校验值） | 自定义版本的 zip SHA256，用于下载校验 |
+| `DOUBAO_BROWSER_FORCE` | `0` | 设 `1` 强制重新下载浏览器（覆盖持久卷里的旧版本） |
 
-纯 Python 标准库实现，**零框架依赖**，x86 / arm64 / armv7 都能跑；后台密码只存 PBKDF2 派生值 + 随机盐，会话是签名票据（面板重启不掉线）；登录失败按 IP 限速。
+纯 Python 标准库实现，**零框架依赖**，x86 / arm64 / armv7 都能跑；后台密码只存 PBKDF2 派生值 + 随机盐，会话是签名票据（面板重启不掉线）；登录失败按 IP 限速。Web 面板本身不依赖浏览器；扫码登录用的 headless shell 只在首次启动时下载一次到 data 卷。
 
 ## 跟随上游更新
 
