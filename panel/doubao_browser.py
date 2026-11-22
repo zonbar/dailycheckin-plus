@@ -240,6 +240,22 @@ _SVG_URI = "data:image/svg+xml;base64,"
 # 换成「圆形对勾 + 登录成功」，容器里没中文字体的无头浏览器会把它渲染成方框，
 # 截图回传前端就成了用户看到的「对勾下面一堆方框」。图形消失时直接不回图，
 # 前端继续用上一张真二维码，等 Cookie 落地后画自己的成功态。
+# 登录弹窗有入场/换码动画，首次加载时按 getBoundingClientRect 截图会截到
+# 动画帧或浮层文字（用户看到的是「对勾 + 方框」/推广文案，而不是二维码）。
+# 二维码本身是 DOM 里的内联 SVG，直接序列化后转 PNG：内容确定、体积约 15 KiB，
+# 既不受渲染时机影响，也不会把浮层文字截进来。截图只作兜底。
+_QR_CANVAS_JS = r"""(async()=>{let e=document.querySelector('[data-testid=qrcode_image] svg');
+if(!e)return '';let r=e.getBoundingClientRect();
+if(r.width<100||r.height<100)return '';
+let s=new XMLSerializer().serializeToString(e);
+let url=URL.createObjectURL(new Blob([s],{type:'image/svg+xml;charset=utf-8'}));
+try{let img=new Image();img.src=url;await img.decode();
+let c=document.createElement('canvas');
+c.width=img.naturalWidth||162;c.height=img.naturalHeight||162;
+c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+return c.toDataURL('image/png')}catch(err){return ''}
+finally{URL.revokeObjectURL(url)}})()"""
+
 _QR_RECT_JS = r"""(()=>{let e=document.querySelector('[data-testid=qrcode_image]');
 if(!e)return '';let g=e.querySelector('svg,canvas,img[src^="data:image/"]');
 if(!g){let bg=getComputedStyle(e).backgroundImage;
@@ -305,8 +321,26 @@ def _qr_screenshot(cdp: CDP) -> str:
     return _PNG_URI + data if data else ""
 
 
+def _qr_canvas(cdp: CDP) -> str:
+    """把弹窗里的内联二维码 SVG 直接转成 PNG：不受动画帧/浮层影响。"""
+    try:
+        result = cdp.page("Runtime.evaluate", {
+            "expression": _QR_CANVAS_JS,
+            "awaitPromise": True, "returnByValue": True,
+        })
+        value = ((result or {}).get("result") or {}).get("value")
+        text = str(value or "").strip()
+    except Exception:  # noqa: BLE001 - 老浏览器可能不支持，走截图兜底
+        return ""
+    return text if text.startswith(_PNG_URI) else ""
+
+
 def _qrcode(cdp: CDP) -> str:
-    # 先截图：拿到的一定是用户实际看到的完整二维码（不是隐藏的 switcher 图标）。
+    # 首选 DOM 里的 SVG 直转 PNG：用户看到的就是这一张，绝不会截到浮层文字。
+    uri = _qr_canvas(cdp)
+    if uri:
+        return uri
+    # 截图兜底：拿到的一定是用户实际看到的完整二维码（不是隐藏的 switcher 图标）。
     uri = _qr_screenshot(cdp)
     if uri:
         return uri

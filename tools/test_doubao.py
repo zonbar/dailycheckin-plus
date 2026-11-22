@@ -580,12 +580,34 @@ class _ShotCdp(_FakeCdp):
         return {}
 
 shot = _ShotCdp()
-check("优先对真实的 qrcode_image 元素截图",
-      dbb._qrcode(shot) == qr_uri and shot.calls[0][0] == "Page.captureScreenshot")
+check("截图兜底能拿到真实的 qrcode_image 元素",
+      dbb._qrcode(shot) == qr_uri
+      and any(m == "Page.captureScreenshot" for m, _ in shot.calls))
 check("截图只裁二维码区域并放大 2 倍",
-      shot.calls[0][1]["clip"]["width"] == 162 and shot.calls[0][1]["clip"]["scale"] == 2)
+      next(p for m, p in shot.calls if m == "Page.captureScreenshot")["clip"]["width"] == 162
+      and next(p for m, p in shot.calls if m == "Page.captureScreenshot")["clip"]["scale"] == 2)
 check("截图定位只认二维码图形并排除成功页文字",
       "svg,canvas,img[src^=" in dbb._QR_RECT_JS and "(e.innerText||'').trim()" in dbb._QR_RECT_JS)
+
+class _CanvasCdp(_FakeCdp):
+    def __init__(self, value):
+        super().__init__("")
+        self.value, self.calls = value, []
+    def page(self, method, params=None):
+        self.calls.append((method, params))
+        if method == "Runtime.evaluate":
+            return {"result": {"value": self.value}}
+        return {}
+
+canvas = _CanvasCdp(qr_uri)
+check("首次加载优先用 DOM 里的 SVG 转 PNG，避免截到浮层文字",
+      dbb._qrcode(canvas) == qr_uri
+      and not any(m == "Page.captureScreenshot" for m, _ in canvas.calls))
+check("SVG 转 PNG 用 awaitPromise 等待图片解码",
+      canvas.calls[0][1].get("awaitPromise") is True
+      and "XMLSerializer" in canvas.calls[0][1].get("expression", ""))
+check("对勾等小图形被尺寸守卫挡下，不生成二维码",
+      "r.width<100||r.height<100" in dbb._QR_CANVAS_JS)
 
 class _DoneCdp(_ShotCdp):
     def js(self, expr):
@@ -594,7 +616,8 @@ class _DoneCdp(_ShotCdp):
 
 done = _DoneCdp()
 check("确认页不再截图带方框文字的对勾",
-      dbb._qrcode(done) == "" and not done.calls, str(done.calls))
+      dbb._qrcode(done) == ""
+      and not any(m == "Page.captureScreenshot" for m, _ in done.calls), str(done.calls))
 
 class _SmallCdp(_ShotCdp):
     def js(self, expr):
@@ -604,7 +627,8 @@ class _SmallCdp(_ShotCdp):
 
 small = _SmallCdp()
 check("几十像素的成功对勾不会被当成二维码截图",
-      dbb._qrcode(small) == "" and not small.calls, str(small.calls))
+      dbb._qrcode(small) == ""
+      and not any(m == "Page.captureScreenshot" for m, _ in small.calls), str(small.calls))
 svg = '<svg width="162" height="162"><rect fill="#000000"/></svg>'
 svg_uri = dbb._qr_uri(json.dumps({"mime": "image/svg+xml", "data": svg}))
 check("SVG 兜底补命名空间再编码成 data URI",
