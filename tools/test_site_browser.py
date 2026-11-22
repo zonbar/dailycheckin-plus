@@ -131,6 +131,18 @@ zdm = sb.site_rule("SMZDM")
 check("值得买登录地址改用实际域名", "zhiyou.smzdm.com" in zdm["login_url"])
 check("值得买选择器命中真实 canvas",
       ".login-container__qrcode-real" in zdm["qr_selectors"])
+# 手机扫码后到登录完成之间，用户还要在手机上过图形验证码；这段窗口期
+# 页面把 canvas 换成「扫描成功」状态层，必须停止截图并给出对应提示。
+check("值得买配置了扫码后存活检测与图形验证码提示",
+      "login-container__qrcode-real" in zdm.get("qr_alive_js", "")
+      and "扫描成功" in zdm.get("qr_alive_js", "")
+      and "图形验证码" in zdm.get("confirm_hint", ""))
+zdm_alive = FakeCdp(contexts=[{"id": 2, "origin": "https://zhiyou.smzdm.com"}])
+zdm_alive.js_values = {"qrcode-real": "1"}
+check("值得买初始码有效", sb._qr_alive(zdm_alive, zdm) is True)
+zdm_scanned = FakeCdp(contexts=[{"id": 2, "origin": "https://zhiyou.smzdm.com"}])
+zdm_scanned.js_values = {}  # 状态层出现，检测返回空
+check("值得买扫码后进入待确认、不再截图", sb._qr_alive(zdm_scanned, zdm) is False)
 iqy = sb.site_rule("IQIYI")
 check("爱奇艺改从首页登录弹窗取 SVG 码",
       "iqiyi.com" in iqy["login_url"] and "click_login" in iqy
