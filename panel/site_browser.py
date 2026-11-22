@@ -218,6 +218,13 @@ RULES: dict[str, dict] = {
         "&referer=https%3A%2F%2Fwww.right.com.cn%2Fforum%2F&statfrom=login",
         "qr_frame": ["xui.ptlogin2.qq.com"],
         "qr_selectors": ["#qrlogin_img", "img.qrImg"],
+        # QQ 扫码确认后，二维码 img 会被成功提示文字覆盖（无头浏览器里渲染成方框），
+        # 但恩山cookie要等 QQ 回调才设置。这段时间别截图，否则把方框当二维码回传。
+        "qr_alive_js": "(()=>{let e=document.querySelector('#qrlogin_img');"
+        "if(!e||!(e.getAttribute('src')||'').includes('ptqrshow'))return '';"
+        "let t=document.body.innerText||'';"
+        "if(/扫描成功|登录成功|扫码成功|授权成功/.test(t))return '';return '1'})()",
+        "confirm_hint": "已扫码，正在完成 QQ 授权，请稍候…",
         "credential": "cookie",
         "domain": "right.com.cn",
         "ready_cookies": ["TWcq_2132_auth"],
@@ -352,6 +359,26 @@ def _qrcode(cdp: CDP, selectors: list[str], frames: list[str] | None = None) -> 
         except Exception:  # noqa: BLE001 - 页面导航中/元素消失，试下一个选择器
             continue
     return ""
+
+
+def _qr_alive(cdp: CDP, rule: dict) -> bool:
+    """二维码是否还有效。
+
+    有些站点（如恩山的 QQ 互联）扫码确认后，二维码区域会被中文成功提示覆盖，
+    但本站 cookie 要等第三方回调才写入。这段窗口期若继续截图，就会把渲染成
+    方框的中文当成二维码回传。规则可用 ``qr_alive_js`` 精确判断；返回 '1'
+    表示码还在，其余情况一律认为已失效。
+    """
+    expr = rule.get("qr_alive_js") or ""
+    if not expr:
+        return True
+    frames = rule.get("qr_frame") or []
+    target = frames[0] if frames else ""
+    try:
+        raw = _eval_context(cdp, target, expr) if target else cdp.js(expr)
+    except Exception:  # noqa: BLE001 - 上下文导航中会短暂失效
+        raw = ""
+    return raw == "1"
 
 
 # --------------------------------------------------------------------------- #
@@ -509,11 +536,18 @@ def status(sid: str) -> dict:
                 ready = rule.get("ready_cookies") or []
                 ok = any(k in one["cookies"] for k in ready) if ready else bool(found)
             if not ok:
-                # 二维码会自己翻新，顺带更新给前端
-                qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
-                if qr and qr != one["qrcode"]:
-                    one["qrcode"] = qr
-                    one["qr_at"] = time.time()
+                # 二维码会自己翻新，顺带更新给前端；但确认后二维码区域会被
+                # 成功提示覆盖，这时停在上一张有效码，不要截到方框乱码。
+                # 一旦进入「已扫码待回调」就锁定，后续轮询不再取图。
+                if one.get("awaiting_callback"):
+                    pass
+                elif _qr_alive(cdp, rule):
+                    qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
+                    if qr and qr != one["qrcode"]:
+                        one["qrcode"] = qr
+                        one["qr_at"] = time.time()
+                else:
+                    one["awaiting_callback"] = True
         except Exception as exc:  # noqa: BLE001
             return {
                 "status": "error", "site": site, "expires_in": 0,
@@ -547,9 +581,12 @@ def status(sid: str) -> dict:
             }
 
         remaining = max(0, int(SESSION_TTL - (time.time() - one["started_at"])))
+        waiting_msg = one.get("awaiting_callback") and rule.get("confirm_hint")
         return {
-            "status": "waiting", "site": site, "qrcode": one["qrcode"],
-            "expires_in": remaining, "message": rule.get("hint", "请用手机扫码登录"),
+            "status": "waiting", "site": site,
+            "qrcode": "" if waiting_msg else one["qrcode"],
+            "expires_in": remaining,
+            "message": waiting_msg or rule.get("hint", "请用手机扫码登录"),
             "mode": "browser",
         }
 

@@ -1101,9 +1101,12 @@
         $("sqApply").disabled = !BQR.credential;
         $("sqStatus").textContent = "登录成功，点「保存登录态」生效";
       } else {
+        // 二维码区域被成功提示覆盖时，后端返回空 qrcode + 友好文案：
+        // 保留上一张有效二维码图（不清空），状态文字改用后端提示。
         if (r.qrcode) paintBqr(r.qrcode, r.expires_in, "等待扫码");
+        else if (r.message) $("sqStatus").textContent = tidyText(r.message);
         else $("sqStatus").textContent = "等待扫码";
-        if (r.message) $("sqSub").textContent = tidyText(r.message);
+        if (r.message && r.qrcode) $("sqSub").textContent = tidyText(r.message);
         if (r.hint) $("sqDebug").textContent = tidyText(r.hint);
       }
       if (r.status === "confirmed") stopBqrPoll();

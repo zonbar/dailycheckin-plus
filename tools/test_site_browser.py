@@ -147,10 +147,27 @@ check("有道云笔记先切扫码再取码",
 check("有道云笔记按 YNOTE_PERS 判成功",
       yd["domain"] == "youdao.com" and "YNOTE_PERS" in yd["ready_cookies"])
 
+# 恩山 QQ 互联：确认后二维码区域被中文成功提示覆盖，必须停止截图
+es = sb.site_rule("ENSHAN")
+check("恩山配置了二维码存活检测与确认提示",
+      bool(es.get("qr_alive_js")) and bool(es.get("confirm_hint"))
+      and any("QQ" in es["confirm_hint"] or "授权" in es["confirm_hint"]
+              for _ in [0]))
+alive_on = FakeCdp(contexts=[{"id": 3, "origin": "https://xui.ptlogin2.qq.com", "name": ""}])
+alive_on.js_values = {"ptqrshow": "1"}
+check("二维码还在时判定为有效", sb._qr_alive(alive_on, es) is True)
+alive_off = FakeCdp(contexts=[{"id": 3, "origin": "https://xui.ptlogin2.qq.com", "name": ""}])
+alive_off.js_values = {}  # 成功提示覆盖后 js 返回空
+check("成功提示覆盖后判定为失效", sb._qr_alive(alive_off, es) is False)
+
 src = open(os.path.join(ROOT, "panel", "site_browser.py"), encoding="utf-8").read()
 body = src.split("def status(", 1)[-1]
 check("先判登录态再取二维码，避免把成功态浮层当码截图",
       body.index("ok = bool(value)") < body.index("qr = _qrcode(cdp"))
+check("取图前先过二维码存活检测", body.index("_qr_alive(cdp, rule)") < body.index("qr = _qrcode(cdp"))
+check("进入待回调后锁定不再取图", "if one.get(\"awaiting_callback\"):" in body)
+check("待回调时返回空二维码与友好文案",
+      '"qrcode": "" if waiting_msg else one["qrcode"]' in body)
 check("成功后不再回传浏览器截图",
       '"status": "confirmed", "site": site, "credential": cred' in body
       and "qrcode" not in body.split('"status": "confirmed", "site": site, "credential": cred', 1)[1].split("}", 1)[0])
@@ -278,6 +295,8 @@ check("apply 走通用 API", 'bqrApi("/apply")' in ui)
 check("通用扫码确认后自绘成功态，不显示方框截图",
       "paintBqrDone" in ui and "qr-done-text" in ui
       and 'paintBqrDone("登录成功")' in ui)
+check("待回调时保留上一张二维码、用后端文案而非等待扫码",
+      'else if (r.message) $("sqStatus").textContent = tidyText(r.message);' in ui)
 check("手动填写仍保留（表单字段动态渲染）", 'data-field="${esc(f.key)}"' in ui and "refresh_token" in open(os.path.join(ROOT, "panel", "catalog.py"), encoding="utf-8").read())
 
 print("\n" + "=" * 68)
