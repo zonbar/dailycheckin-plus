@@ -69,6 +69,12 @@ class FakeCdp:
 
     def page(self, method, params=None):
         self.calls.append((method, params))
+        if method == "Runtime.evaluate" and params and params.get("awaitPromise"):
+            expr = str(params.get("expression") or "")
+            for key, value in self.js_values.items():
+                if key in expr:
+                    return {"result": {"value": value}}
+            return {"result": {"value": ""}}
         if method == "Page.captureScreenshot":
             return {"data": self.shot}
         return {}
@@ -132,7 +138,7 @@ check("值得买登录地址改用实际域名", "zhiyou.smzdm.com" in zdm["logi
 check("值得买选择器命中真实 canvas",
       ".login-container__qrcode-real" in zdm["qr_selectors"])
 # 手机扫码后到登录完成之间，用户还要在手机上过图形验证码；这段窗口期
-# 页面把 canvas 换成「扫描成功」状态层，必须停止截图并给出对应提示。
+# 页面把 canvas 换成「扫描成功」状态层，必须停止取图并给出对应提示。
 check("值得买配置了扫码后存活检测与图形验证码提示",
       "login-container__qrcode-real" in zdm.get("qr_alive_js", "")
       and "扫描成功" in zdm.get("qr_alive_js", "")
@@ -147,7 +153,7 @@ zdm_alive.js_values = {"qrcode-real": "1"}
 check("值得买初始码有效", sb._qr_alive(zdm_alive, zdm) is True)
 zdm_scanned = FakeCdp(contexts=[{"id": 2, "origin": "https://zhiyou.smzdm.com"}])
 zdm_scanned.js_values = {}  # 状态层出现，检测返回空
-check("值得买扫码后进入待确认、不再截图", sb._qr_alive(zdm_scanned, zdm) is False)
+check("值得买扫码后进入待确认、不再取图", sb._qr_alive(zdm_scanned, zdm) is False)
 iqy = sb.site_rule("IQIYI")
 check("爱奇艺改从首页登录弹窗取 SVG 码",
       "iqiyi.com" in iqy["login_url"] and "click_login" in iqy
@@ -166,7 +172,7 @@ check("有道云笔记先切扫码再取码",
 check("有道云笔记按 YNOTE_PERS 判成功",
       yd["domain"] == "youdao.com" and "YNOTE_PERS" in yd["ready_cookies"])
 
-# 恩山 QQ 互联：确认后二维码区域被中文成功提示覆盖，必须停止截图
+# 恩山 QQ 互联：确认后二维码区域被中文成功提示覆盖，必须停止取图
 es = sb.site_rule("ENSHAN")
 check("恩山配置了二维码存活检测与确认提示",
       bool(es.get("qr_alive_js")) and bool(es.get("confirm_hint"))
@@ -219,7 +225,7 @@ check("站点自己的页面不执行自动点击", sb._nudge_callback(nudge_ski
 check("Discuz 变体 auth cookie 也能判成功",
       bool(re.search(AUTH_RE, "TWcq_2132_auth"))
       and bool(re.search(AUTH_RE, "rHEX_2132_auth")))
-check("飞牛微信登录后也会停止截图", bool(fnnas.get("qr_alive_js")) and bool(fnnas.get("confirm_hint")))
+check("飞牛微信登录后也会停止取图", bool(fnnas.get("qr_alive_js")) and bool(fnnas.get("confirm_hint")))
 
 # 两个百度站点换成随面板打包的官方 App 图标，不依赖外网 favicon
 cat_src = open(os.path.join(ROOT, "panel", "catalog.py"), encoding="utf-8").read()
@@ -231,7 +237,7 @@ for icon in ("tieba.png", "baiduwp.png"):
 
 src = open(os.path.join(ROOT, "panel", "site_browser.py"), encoding="utf-8").read()
 body = src.split("def status(", 1)[-1]
-check("先判登录态再取二维码，避免把成功态浮层当码截图",
+check("先判登录态再取二维码，避免把成功态浮层当码回传",
       body.index("ok = bool(value)") < body.index("qr = _qrcode(cdp"))
 check("取图前先过二维码存活检测", body.index("_qr_alive(cdp, rule)") < body.index("qr = _qrcode(cdp"))
 check("进入待回调后锁定不再取图", "if one.get(\"awaiting_callback\"):" in body)
@@ -242,7 +248,7 @@ check("待回调时自动点授权中间页的确认按钮", "_nudge_callback(cd
 check("待回调超过一分钟给出手动 Cookie 兜底", 'waited > 60' in body and 'confirm_hint_long' in body)
 check("cookie 成功判据支持正则（兼容 Discuz cookie 前缀）",
       "ready_cookie_patterns" in body and "re.search(p, k)" in body)
-check("成功后不再回传浏览器截图",
+check("成功后不再回传二维码图",
       '"status": "confirmed", "site": site, "credential": cred' in body
       and "qrcode" not in body.split('"status": "confirmed", "site": site, "credential": cred', 1)[1].split("}", 1)[0])
 
@@ -275,36 +281,46 @@ cred_bili = sb.credential_of(one_bili)
 check("B 站产出 {cookie}", set(cred_bili) == {"cookie"} and "SESSDATA=a" in cred_bili["cookie"], str(cred_bili))
 
 # --------------------------------------------------------------------------- #
-section("4) 二维码提取")
+section("4) 二维码提取：直接取 DOM 原图，不用坐标截图")
 shot_b64 = "iVBORw0KGgoAAAANSUhEUg=="
-cdp_qr = FakeCdp(js_values={"scrollIntoView": '{"x":10,"y":20,"width":160,"height":160}'}, shot=shot_b64)
+data_uri = sb.PNG_URI + shot_b64
+cdp_qr = FakeCdp(js_values={".qrcode canvas": data_uri})
 qr = sb._qrcode(cdp_qr, [".qrcode canvas"])
-check("截图返回 data:image/png data URI", qr == sb.PNG_URI + shot_b64, qr[:40])
+check("canvas 直接返回 DOM 原图 data URI", qr == data_uri, qr[:40])
+check("取图不再调用页面截图",
+      not any(m == "Page.captureScreenshot" for m, _ in cdp_qr.calls), str(cdp_qr.calls))
+check("异步取原图等待 Promise 完成",
+      any(m == "Runtime.evaluate" and (p or {}).get("awaitPromise") is True
+          for m, p in cdp_qr.calls), str(cdp_qr.calls[:2]))
+check("取图 JS 覆盖 canvas / img / svg / 背景图且不读坐标",
+      all(k in sb._QR_SOURCE_JS for k in
+          ("toDataURL", "naturalWidth", "XMLSerializer", "backgroundImage"))
+      and "getBoundingClientRect" not in sb._QR_SOURCE_JS
+      and not hasattr(sb, "_frame_offset"))
 cdp_noqr = FakeCdp()
 check("找不到二维码时返回空", sb._qrcode(cdp_noqr, [".nope"]) == "")
+bad = FakeCdp(js_values={".bad": "javascript:alert(1)"})
+check("非图片地址不回传给前端", sb._qrcode(bad, [".bad"]) == "")
 
-# 跨域 iframe：子上下文里只拿到二维码的局部坐标，两个父 iframe 的偏移要逐层累加。
+# 跨域 iframe：只在指定上下文里取原图，不再累加 iframe 坐标。
+qr_url = "https://xui.ptlogin2.qq.com/ptqrshow?appid=1"
 frame_cdp = FakeCdp(
-    js_values={"scrollIntoView": '{"x":5,"y":7,"width":112,"height":112}'},
-    shot=shot_b64,
-    frames={
-        "passport.alipan.com": {"x": 100, "y": 60},
-        "auth.alipan.com": {"x": 20, "y": 30},
-    },
+    js_values={"#qrlogin_img": qr_url},
     contexts=[
-        {"id": 1, "origin": "https://www.alipan.com"},
-        {"id": 2, "origin": "https://auth.alipan.com"},
-        {"id": 3, "origin": "https://passport.alipan.com"},
+        {"id": 1, "origin": "https://www.right.com.cn"},
+        {"id": 2, "origin": "https://graph.qq.com"},
+        {"id": 3, "origin": "https://xui.ptlogin2.qq.com"},
     ],
 )
-qr_frame = sb._qrcode(frame_cdp, ["#qrcode-img canvas"],
-                      ["passport.alipan.com", "auth.alipan.com"])
-clip = next((p.get("clip") or {} for m, p in frame_cdp.calls if m == "Page.captureScreenshot"), {})
-check("img 类型二维码等像素加载完再截图",
-      "e.complete" in sb._QR_RECT_JS and "e.naturalWidth" in sb._QR_RECT_JS)
-check("iframe 内二维码截图坐标逐层累加",
-      qr_frame == sb.PNG_URI + shot_b64
-      and clip.get("x") == 125 and clip.get("y") == 97, str(clip))
+qr_frame = sb._qrcode(frame_cdp, ["#qrlogin_img"], ["xui.ptlogin2.qq.com"])
+check("iframe 内二维码直接返回原图 URL", qr_frame == qr_url, qr_frame)
+runtime = [p for m, p in frame_cdp.calls if m == "Runtime.evaluate"]
+check("取图 JS 投到指定 iframe 上下文",
+      bool(runtime) and runtime[0].get("contextId") == 3, str(runtime[:1]))
+check("跨域取图也不截图、不读 iframe 偏移",
+      not any(m == "Page.captureScreenshot" for m, _ in frame_cdp.calls)
+      and not any("querySelectorAll('iframe')" in str(p.get("expression") or "")
+                  for p in runtime), str(frame_cdp.calls[:2]))
 
 # --------------------------------------------------------------------------- #
 section("5) apply 落盘：新增与续期")
@@ -366,7 +382,7 @@ check("扫码入口按钮", 'data-action="site-qr"' in ui)
 check("续期按钮", 'data-action="site-qr-renew"' in ui)
 check("start 走通用 API", '/start' in ui and 'bqrApi' in ui)
 check("apply 走通用 API", 'bqrApi("/apply")' in ui)
-check("通用扫码确认后自绘成功态，不显示方框截图",
+check("通用扫码确认后自绘成功态，不显示方框文字",
       "paintBqrDone" in ui and "qr-done-text" in ui
       and 'paintBqrDone("登录成功")' in ui)
 check("待回调时保留上一张二维码、用后端文案而非等待扫码",

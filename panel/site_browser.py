@@ -7,7 +7,8 @@
 **数据驱动**的通用框架，让别的签到站点也能用同一条路：
 
 1. 面板在无头浏览器里打开站点登录页；
-2. 把页面上的登录二维码截图发给面板显示；
+2. 直接从 DOM 取二维码原图（canvas.toDataURL / img 原图 / SVG 转 PNG），
+   不按坐标截图，避免裁切到浮层、动画帧或换成方框的中文提示；
 3. 用户用手机扫码 / 登录；
 4. 面板轮询，按站点规则判断「登录成功」；
 5. 成功后按规则抓凭据——**cookie**（CDP Storage.getCookies）或
@@ -69,8 +70,9 @@ _SESSIONS: dict[str, dict] = {}   # sid -> 会话（支持同时给不同站点�
 # 每条规则：
 #   login_url      登录页地址（直接打开就到登录/扫码）
 #   click_login    可选 JS：落在首页时点「登录」进入登录弹窗/页
-#   qr_selectors   二维码元素选择器（按序尝试，命中第一个可见的截图）
-#   qr_frame       二维码在跨域 iframe 里时，从内到外列出所属域名；坐标会逐层加上 iframe 偏移
+#   qr_selectors   二维码元素选择器（按序尝试，命中第一个就直接取 DOM 原图）
+#   qr_frame       二维码在跨域 iframe 里时，从内到外列出所属域名；只用来定位取图的 JS 上下文，
+#                  不再叠加 iframe 坐标
 #   qr_supported   False 表示该站没有可用扫码登录，不展示扫码入口（只能手动填凭据）
 #   credential     "cookie" | "localstorage"
 #   domain         cookie 类：只收集域名含此串的 cookie
@@ -212,7 +214,7 @@ RULES: dict[str, dict] = {
         ],
         # 扫码后页面轮询到 status=5，真码 canvas 会被换成「扫描成功 / 请在手机上
         # 确认登录」状态层；手机端还要过图形验证码，服务端才在轮询接口里下发
-        # 登录 cookie。这段窗口期若不停止截图，就会把状态层（无头里渲染成方框）
+        # 登录 cookie。这段窗口期若不停止取图，就会把状态层（无头里渲染成方框）
         # 当码回传。
         "qr_alive_js": "(()=>{let e=document.querySelector('.login-container__qrcode-real');"
         "if(!e||!e.width)return '';"
@@ -239,7 +241,7 @@ RULES: dict[str, dict] = {
         "qr_frame": ["xui.ptlogin2.qq.com"],
         "qr_selectors": ["#qrlogin_img", "img.qrImg"],
         # QQ 扫码确认后，二维码 img 会被成功提示文字覆盖（无头浏览器里渲染成方框），
-        # 但恩山cookie要等 QQ 回调才设置。这段时间别截图，否则把方框当二维码回传。
+        # 但恩山cookie要等 QQ 回调才设置。这段时间别取图，否则把方框当二维码回传。
         "qr_alive_js": "(()=>{let e=document.querySelector('#qrlogin_img');"
         "if(!e||!(e.getAttribute('src')||'').includes('ptqrshow'))return '';"
         "let t=document.body.innerText||'';"
@@ -270,7 +272,7 @@ RULES: dict[str, dict] = {
         # plugin.php?id=xigua_login:login&qr=1 里直接挂着微信二维码（220×220）。
         "login_url": "https://club.fnnas.com/plugin.php?id=xigua_login:login&qr=1",
         "qr_selectors": ['img[src*="xigua_login/cache"]'],
-        # 微信确认后同样别再截图，否则把成功提示（无头里是方框）当二维码回传。
+        # 微信确认后同样别再取图，否则把成功提示（无头里是方框）当二维码回传。
         # 二维码 img 的 src 含 /，CSS 属性选择器必须加引号，否则整段 JS 抛异常
         # 被当成「码已失效」，页面一打开就卡在「正在完成微信授权」不显示码。
         "qr_alive_js": "(()=>{let e=document.querySelector('img[src*=\"xigua_login/cache\"]');"
@@ -325,21 +327,100 @@ def available() -> tuple[bool, str]:
 # --------------------------------------------------------------------------- #
 # 二维码提取
 # --------------------------------------------------------------------------- #
-_QR_RECT_JS = """(sel)=>{let e=document.querySelector(sel);if(!e)return '';
-// img 刚挂上 DOM 时 src 已存在但像素还没到，截图会是一张白板；等 naturalWidth 出来。
-if(e.tagName==='IMG'&&(!e.complete||!e.naturalWidth))return '';
-let r=e.getBoundingClientRect();if(r.width<40||r.height<40)return '';
-e.scrollIntoView({block:'center'});r=e.getBoundingClientRect();
-return JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height})}"""
+_QR_SOURCE_JS = r"""(async(sel)=>{
+const node=document.querySelector(sel);
+if(!node)return '';
+const pick=(root)=>{
+  if(!root)return null;
+  const tag=(root.tagName||'').toUpperCase();
+  if(tag==='CANVAS')return {kind:'canvas',el:root};
+  if(tag==='IMG')return {kind:'img',el:root};
+  if(tag==='SVG')return {kind:'svg',el:root};
+  let inner=root.querySelector?root.querySelector('canvas,img,svg'):null;
+  if(inner)return pick(inner);
+  let bg='';
+  try{bg=getComputedStyle(root).backgroundImage||''}catch(e){}
+  let m=bg.match(/url\((['"]?)(.*?)\1\)/);
+  if(m&&m[2])return {kind:'url',url:m[2]};
+  return null;
+};
+const target=pick(node);
+if(!target)return '';
+const asData=(url)=>new Promise(resolve=>{
+  try{
+    fetch(url,{credentials:'include'}).then(r=>r.ok?r.blob():Promise.reject()).then(b=>{
+      let fr=new FileReader();
+      fr.onload=()=>resolve(String(fr.result||''));
+      fr.onerror=()=>resolve('');
+      fr.readAsDataURL(b);
+    }).catch(()=>resolve(''));
+  }catch(e){resolve('')}
+});
+if(target.kind==='canvas'){
+  try{let u=target.el.toDataURL('image/png');
+    if(u&&u.startsWith('data:image/')&&u.length>100)return u}catch(e){}
+  return '';
+}
+if(target.kind==='img'){
+  let e=target.el,src=e.currentSrc||e.src||'';
+  if(!src)return '';
+  if(src.startsWith('data:image/'))return src;
+  if(e.complete&&!e.naturalWidth)return '';
+  let u=await asData(src);
+  if(u&&u.startsWith('data:image/')&&u.length>100)return u;
+  try{
+    let c=document.createElement('canvas');
+    c.width=e.naturalWidth||e.width||0;c.height=e.naturalHeight||e.height||0;
+    if(c.width>=40&&c.height>=40){
+      c.getContext('2d').drawImage(e,0,0,c.width,c.height);
+      u=c.toDataURL('image/png');
+      if(u&&u.length>100)return u;
+    }
+  }catch(err){}
+  return new URL(src,location.href).href;
+}
+if(target.kind==='svg'){
+  try{
+    let s=new XMLSerializer().serializeToString(target.el);
+    let head=s.slice(0,s.indexOf('>')+1);
+    if(/<svg/.test(s)&&!/xmlns=/.test(head))
+      s=s.replace('<svg','<svg xmlns="http://www.w3.org/2000/svg"',1);
+    let url=URL.createObjectURL(new Blob([s],{type:'image/svg+xml;charset=utf-8'}));
+    try{
+      let img=new Image();img.src=url;await img.decode();
+      let c=document.createElement('canvas');
+      c.width=img.naturalWidth||200;c.height=img.naturalHeight||200;
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      let u=c.toDataURL('image/png');
+      if(u&&u.length>100)return u;
+    }finally{URL.revokeObjectURL(url)}
+  }catch(err){}
+  return '';
+}
+if(target.kind==='url'){
+  let u=await asData(target.url);
+  if(u&&u.startsWith('data:image/')&&u.length>100)return u;
+  return new URL(target.url,location.href).href;
+}
+return ''})"""
 
-# OOPIF 的 frameElement 在子上下文里经常是 null；反过来让父页面按 src 找 iframe，
-# 读取它嵌入父页面时的位置。多层 iframe 逐层相加，就得到二维码在顶层 viewport 的坐标。
-_IFRAME_RECT_JS = """(mark)=>{let e=[...document.querySelectorAll('iframe')]
-.find(f=>(f.src||'').includes(mark));if(!e)return '';
-let r=e.getBoundingClientRect();return JSON.stringify({x:r.x,y:r.y})}"""
+
+def _eval_js(cdp: CDP, expression: str, context_id: int | None = None,
+             await_promise: bool = False):
+    """在指定（默认顶层）上下文执行表达式；异步取原图要等 Promise 完成。"""
+    if not await_promise:
+        return cdp.js(expression, context_id)
+    params: dict = {
+        "expression": expression, "awaitPromise": True, "returnByValue": True,
+    }
+    if context_id is not None:
+        params["contextId"] = context_id
+    result = cdp.page("Runtime.evaluate", params).get("result") or {}
+    return result.get("value")
 
 
-def _eval_context(cdp: CDP, mark: str, expression: str):
+def _eval_context(cdp: CDP, mark: str, expression: str,
+                  await_promise: bool = False):
     """在域名含 mark 的 JS 上下文（含跨域 iframe）里执行一段表达式。"""
     contexts = getattr(cdp, "contexts", None)
     if not callable(contexts):
@@ -349,65 +430,33 @@ def _eval_context(cdp: CDP, mark: str, expression: str):
         if mark not in hay:
             continue
         try:
-            return cdp.js(expression, ctx["id"]) or ""
+            return _eval_js(cdp, expression, ctx["id"], await_promise) or ""
         except Exception:  # noqa: BLE001 - 导航中上下文会短暂失效，下一轮再取
             return ""
     return ""
 
 
-def _frame_offset(cdp: CDP, frames: list[str]) -> tuple[float, float]:
-    x = y = 0.0
-    contexts = getattr(cdp, "contexts", None)
-    if not callable(contexts):
-        return x, y
-    for mark in frames:
-        expr = f"({_IFRAME_RECT_JS})({json.dumps(mark)})"
-        for ctx in contexts():
-            try:
-                raw = cdp.js(expr, ctx["id"])
-            except Exception:  # noqa: BLE001 - 已销毁的上下文/导航中，换下一个
-                continue
-            if not raw:
-                continue
-            try:
-                rect = json.loads(raw)
-                x += float(rect.get("x") or 0)
-                y += float(rect.get("y") or 0)
-            except (TypeError, ValueError):
-                continue
-            break
-    return x, y
-
-
 def _qrcode(cdp: CDP, selectors: list[str], frames: list[str] | None = None) -> str:
-    """在页面（或指定 iframe）里找可见二维码，截图返回 data URI。
+    """按选择器从 DOM 直接取二维码原图，返回 ``<img src>`` 能用的地址。
 
-    截图而非取 canvas.toDataURL：拿到的是用户实际看到的完整二维码，
-    也不受跨域 canvas 污染影响。frames 从内到外列出 iframe 所属域名，
-    避免把外层页面上的「下载 App 码」误当成登录码。
+    canvas 走 toDataURL，img/data URI 原样返回（跨域时回退绝对原图 URL），
+    内联 SVG 序列化后转 PNG。frames 从内到外列出 iframe 所属域名，只用来
+    把 JS 投到正确上下文（如阿里云盘的 passport iframe），避免误取首页
+    下载码；不再读元素坐标、不再叠加 iframe 偏移、也不调用页面截图。
     """
-    frames = list(frames or [])
-    offset_x, offset_y = _frame_offset(cdp, frames) if frames else (0.0, 0.0)
-    # 有 frames 时只在最内层 iframe 里找；没有就走顶层页面。
-    target = frames[0] if frames else ""
+    target = list(frames or [])[:1]
     for sel in list(selectors) + GENERIC_QR_SELECTORS:
+        expr = f"({_QR_SOURCE_JS})({json.dumps(sel)})"
         try:
-            expr = f"({_QR_RECT_JS})({json.dumps(sel)})"
-            raw = _eval_context(cdp, target, expr) if target else cdp.js(expr)
-            if not raw:
-                continue
-            clip = json.loads(raw)
-            clip["x"] = float(clip.get("x") or 0) + offset_x
-            clip["y"] = float(clip.get("y") or 0) + offset_y
-            clip["scale"] = 3
-            shot = cdp.page("Page.captureScreenshot", {
-                "format": "png", "clip": clip, "captureBeyondViewport": False,
-            })
-            data = str((shot or {}).get("data") or "")
-            if data:
-                return PNG_URI + data
+            raw = (
+                _eval_context(cdp, target[0], expr, await_promise=True)
+                if target else _eval_js(cdp, expr, await_promise=True)
+            )
         except Exception:  # noqa: BLE001 - 页面导航中/元素消失，试下一个选择器
             continue
+        data = str(raw or "").strip()
+        if data.startswith("data:image/") or re.match(r"^https?://", data, re.I):
+            return data
     return ""
 
 
@@ -415,7 +464,7 @@ def _qr_alive(cdp: CDP, rule: dict) -> bool:
     """二维码是否还有效。
 
     有些站点（如恩山的 QQ 互联）扫码确认后，二维码区域会被中文成功提示覆盖，
-    但本站 cookie 要等第三方回调才写入。这段窗口期若继续截图，就会把渲染成
+    但本站 cookie 要等第三方回调才写入。这段窗口期若继续取图，就会把渲染成
     方框的中文当成二维码回传。规则可用 ``qr_alive_js`` 精确判断；返回 '1'
     表示码还在，其余情况一律认为已失效。
     """
@@ -616,7 +665,7 @@ def status(sid: str) -> dict:
         try:
             cdp = one["cdp"]
             # 先判登录态，再决定要不要取图：手机上点确认后，页面会立刻把二维码
-            # 换成「对勾 + 登录成功」浮层，这时再按坐标截图就会把浮层（以及无头
+            # 换成「对勾 + 登录成功」浮层，这时再取图就会把浮层（以及无头
             # 浏览器渲染成方框的中文字）当成二维码回传，面板里就出现乱码图片。
             # 已经登录时直接返回 confirmed，根本不取图，前端自绘成功态。
             if rule.get("credential") == "localstorage":
@@ -637,7 +686,7 @@ def status(sid: str) -> dict:
             if not ok:
                 # 二维码会自己翻新，顺带更新给前端；但确认后二维码区域会被
                 # 成功提示覆盖，这时停在上一张有效码，不要截到方框乱码。
-                # 一旦进入「已扫码待回调」就锁定，后续轮询不再取图。
+                # 一旦进入「已扫码待回调」就锁定，后续轮询不再取原图。
                 if one.get("awaiting_callback"):
                     _nudge_callback(cdp, rule)
                 elif _qr_alive(cdp, rule):

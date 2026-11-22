@@ -8,9 +8,9 @@
 真正的登录二维码在 ``[data-testid=qrcode_image]`` 里，是一个 162×162 的
 **内联 SVG**；``[data-testid=qrcode_switcher]`` 只是隐藏的装饰图标（0×0、
 蓝色斜切的半张 QR 图），早先误取它才导致面板里只显示半张图。
-优先用 CDP 对真实的二维码元素截图（PNG，约 17 KiB）；截图失败再退回
-序列化 SVG / 背景图。任何返回给前端的图都必须带 ``data:`` 前缀，否则
-``<img src>`` 会当相对路径处理，弹窗空白。
+直接从 DOM 取二维码原图：内联 SVG 序列化后转 PNG（约 15 KiB），或取
+``img`` 的 data URI；不再按元素坐标截图。任何返回给前端的图都必须带
+``data:`` 前缀，否则 ``<img src>`` 会当相对路径处理，弹窗空白。
 
 每次登录都用全新 profile + 独立调试端口，账号之间不会串登录态。
 ``--no-sandbox`` / ``--disable-dev-shm-usage`` 是为在 Docker（含 NAS 自带的
@@ -236,17 +236,18 @@ _PNG_URI = "data:image/png;base64,"
 _SVG_URI = "data:image/svg+xml;base64,"
 
 # 真实二维码：162×162 内联 SVG；switcher 是 0×0 的装饰图，绝不能再取它。
-# 只截二维码图形本身（svg / img / canvas），不要截外层容器：手机确认后外层会
-# 换成「圆形对勾 + 登录成功」，容器里没中文字体的无头浏览器会把它渲染成方框，
-# 截图回传前端就成了用户看到的「对勾下面一堆方框」。图形消失时直接不回图，
-# 前端继续用上一张真二维码，等 Cookie 落地后画自己的成功态。
-# 登录弹窗有入场/换码动画，首次加载时按 getBoundingClientRect 截图会截到
-# 动画帧或浮层文字（用户看到的是「对勾 + 方框」/推广文案，而不是二维码）。
-# 二维码本身是 DOM 里的内联 SVG，直接序列化后转 PNG：内容确定、体积约 15 KiB，
-# 既不受渲染时机影响，也不会把浮层文字截进来。截图只作兜底。
+# 只取二维码图形本身（svg / img），不要取外层容器：手机确认后外层会换成
+# 「圆形对勾 + 登录成功」，容器里没中文字体的无头浏览器会把它渲染成方框。
+# 图形消失时直接不回图，前端继续用上一张真二维码，等 Cookie 落地后画成功态。
+# 不用元素坐标 / 页面截图：入场动画或浮层文字都会被截进来。二维码本身是 DOM
+# 里的内联 SVG，序列化后转 PNG 内容确定、体积约 15 KiB；尺寸用 SVG 自身属性
+# 判断，顺便挡掉成功页几十像素的对勾。
 _QR_CANVAS_JS = r"""(async()=>{let e=document.querySelector('[data-testid=qrcode_image] svg');
-if(!e)return '';let r=e.getBoundingClientRect();
-if(r.width<100||r.height<100)return '';
+if(!e)return '';
+let vb=e.viewBox&&e.viewBox.baseVal;
+let w=parseFloat(e.getAttribute('width')||(vb&&vb.width)||0);
+let h=parseFloat(e.getAttribute('height')||(vb&&vb.height)||0);
+if(w<100||h<100)return '';
 let s=new XMLSerializer().serializeToString(e);
 let url=URL.createObjectURL(new Blob([s],{type:'image/svg+xml;charset=utf-8'}));
 try{let img=new Image();img.src=url;await img.decode();
@@ -255,14 +256,6 @@ c.width=img.naturalWidth||162;c.height=img.naturalHeight||162;
 c.getContext('2d').drawImage(img,0,0,c.width,c.height);
 return c.toDataURL('image/png')}catch(err){return ''}
 finally{URL.revokeObjectURL(url)}})()"""
-
-_QR_RECT_JS = r"""(()=>{let e=document.querySelector('[data-testid=qrcode_image]');
-if(!e)return '';let g=e.querySelector('svg,canvas,img[src^="data:image/"]');
-if(!g){let bg=getComputedStyle(e).backgroundImage;
-if(!/url\(/.test(bg)||(e.innerText||'').trim())return '';g=e}
-let r=g.getBoundingClientRect();
-if(r.width<100||r.height<100)return '';   // 成功页的对勾只有几十像素，别当成二维码
-return JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height})})()"""
 
 _QR_JS = r"""(()=>{let s=document.querySelector('[data-testid=qrcode_image] svg');
 if(s)return JSON.stringify({mime:'image/svg+xml',data:s.outerHTML});
@@ -298,29 +291,6 @@ def _qr_uri(raw: str) -> str:
     return _PNG_URI + "".join(text.split())
 
 
-def _qr_screenshot(cdp: CDP) -> str:
-    """对真实二维码元素截图：体积比内联 SVG 小一个数量级，也不怕 SVG 命名空间。"""
-    try:
-        raw = cdp.js(_QR_RECT_JS)
-        rect = json.loads(raw) if raw else None
-        if not isinstance(rect, dict):
-            return ""
-        clip = {
-            "x": float(rect["x"]), "y": float(rect["y"]),
-            "width": float(rect["width"]), "height": float(rect["height"]),
-            "scale": 2,
-        }
-        if clip["width"] < 100 or clip["height"] < 100:
-            return ""
-        shot = cdp.page("Page.captureScreenshot", {
-            "format": "png", "clip": clip, "captureBeyondViewport": False,
-        })
-        data = str((shot or {}).get("data") or "")
-    except Exception:  # noqa: BLE001 - 截图失败还有 SVG 兜底
-        return ""
-    return _PNG_URI + data if data else ""
-
-
 def _qr_canvas(cdp: CDP) -> str:
     """把弹窗里的内联二维码 SVG 直接转成 PNG：不受动画帧/浮层影响。"""
     try:
@@ -330,7 +300,7 @@ def _qr_canvas(cdp: CDP) -> str:
         })
         value = ((result or {}).get("result") or {}).get("value")
         text = str(value or "").strip()
-    except Exception:  # noqa: BLE001 - 老浏览器可能不支持，走截图兜底
+    except Exception:  # noqa: BLE001 - 老浏览器可能不支持，走 DOM data URI 兜底
         return ""
     return text if text.startswith(_PNG_URI) else ""
 
@@ -340,10 +310,7 @@ def _qrcode(cdp: CDP) -> str:
     uri = _qr_canvas(cdp)
     if uri:
         return uri
-    # 截图兜底：拿到的一定是用户实际看到的完整二维码（不是隐藏的 switcher 图标）。
-    uri = _qr_screenshot(cdp)
-    if uri:
-        return uri
+    # 兜底也是 DOM 原图：只认 qrcode_image 里的 data URI / SVG，不按坐标截图。
     try:
         return _qr_uri(cdp.js(_QR_JS))
     except Exception:  # noqa: BLE001 - 页面导航中取不到，下一轮再试
