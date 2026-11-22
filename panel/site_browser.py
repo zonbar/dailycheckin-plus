@@ -233,7 +233,9 @@ RULES: dict[str, dict] = {
         "confirm_hint_long": "QQ 授权回调还没完成，请确认手机上已点「确认登录」。若一直没反应，可关闭本窗口改用手动 Cookie：",
         # 手机确认后 graph.qq.com 有时停在「授权并登录」中间页，不会自己回调恩山；
         # 这里在等待期自动点一次授权按钮，避免用户卡在 confirm_hint 上。
-        "after_scan_frames": ["graph.qq.com", "connect.qq.com", "xui.ptlogin2.qq.com"],
+        # xui.ptlogin2.qq.com 是二维码「来源页」，里面「快捷登录/密码登录」绝不能点；
+        # 真正的授权确认按钮在 graph.qq.com / connect.qq.com 回调页。
+        "after_scan_frames": ["graph.qq.com", "connect.qq.com"],
         "after_scan_js": "(()=>{let b=[...document.querySelectorAll('a,button,input[type=submit],[class*=btn]')]"
         ".find(e=>{let t=(e.innerText||e.value||'').trim();"
         "return t&&t.length<12&&/登录|授权|同意|确认|允许/.test(t)"
@@ -254,7 +256,9 @@ RULES: dict[str, dict] = {
         "login_url": "https://club.fnnas.com/plugin.php?id=xigua_login:login&qr=1",
         "qr_selectors": ['img[src*="xigua_login/cache"]'],
         # 微信确认后同样别再截图，否则把成功提示（无头里是方框）当二维码回传。
-        "qr_alive_js": "(()=>{let e=document.querySelector('img[src*=xigua_login/cache]');"
+        # 二维码 img 的 src 含 /，CSS 属性选择器必须加引号，否则整段 JS 抛异常
+        # 被当成「码已失效」，页面一打开就卡在「正在完成微信授权」不显示码。
+        "qr_alive_js": "(()=>{let e=document.querySelector('img[src*=\"xigua_login/cache\"]');"
         "if(!e||!e.naturalWidth)return '';"
         "let t=document.body.innerText||'';"
         "if(/登录成功|扫码成功|扫描成功|授权成功/.test(t))return '';return '1'})()",
@@ -409,7 +413,23 @@ def _qr_alive(cdp: CDP, rule: dict) -> bool:
         raw = _eval_context(cdp, target, expr) if target else cdp.js(expr)
     except Exception:  # noqa: BLE001 - 上下文导航中会短暂失效
         raw = ""
-    return raw == "1"
+    if raw == "1":
+        return True
+    # 没有指定 qr_frame 时，默认上下文可能是已经关掉的空白页（实测飞牛论坛
+    # 第一个上下文是 '://' 空页）。再逐个试其它上下文，只要有一个明确说
+    # 「码还在」就别误判成已确认，否则页面一打开就不显示二维码。
+    if not target:
+        try:
+            contexts = cdp.contexts() if callable(getattr(cdp, "contexts", None)) else []
+        except Exception:  # noqa: BLE001
+            contexts = []
+        for ctx in contexts:
+            try:
+                if str(cdp.js(expr, ctx["id"]) or "") == "1":
+                    return True
+            except Exception:  # noqa: BLE001 - 上下文正在跳转
+                continue
+    return False
 
 
 def _nudge_callback(cdp: CDP, rule: dict) -> bool:

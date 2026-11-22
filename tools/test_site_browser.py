@@ -11,6 +11,7 @@
 
 跑法：python3 tools/test_site_browser.py
 """
+import inspect
 import json
 import os
 import re
@@ -162,6 +163,17 @@ alive_off.js_values = {}  # 成功提示覆盖后 js 返回空
 check("成功提示覆盖后判定为失效", sb._qr_alive(alive_off, es) is False)
 check("恩山配置了 QQ 授权中间页自动确认",
       bool(es.get("after_scan_js")) and "graph.qq.com" in (es.get("after_scan_frames") or []))
+# 真实浏览器实测：xui.ptlogin2.qq.com 是二维码来源页，里面的「快捷登录/
+# 密码登录」一点就把扫码流程打断，绝不能列进自动确认的上下文。
+check("二维码来源页不参与自动确认（避免误点快捷登录）",
+      "xui.ptlogin2.qq.com" not in (es.get("after_scan_frames") or []))
+# 飞牛 qr_alive_js 的选择器值含 /，必须加引号；否则整段 JS 抛异常被当成
+# 「码已失效」，页面一打开就卡在「正在完成微信授权」不显示二维码。
+fnnas = sb.site_rule("FNNASCLUB")
+check("飞牛存活检测的属性选择器带引号",
+      'img[src*="xigua_login/cache"]' in fnnas.get("qr_alive_js", ""))
+check("多上下文页面的存活检测会逐个试其它上下文",
+      "for ctx in contexts:" in inspect.getsource(sb._qr_alive))
 # 真实浏览器实测：恩山现在的 cookie 前缀是 rHEX，不是文档里写的 TWcq。
 # 前缀写死会导致「QQ 已回调、Cookie 已写入」却判不出登录态，一直卡在 confirm_hint。
 AUTH_RE = es["auth_cookie_pattern"]
