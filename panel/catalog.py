@@ -49,7 +49,7 @@ SITE_META: dict[str, dict] = {
         "required": ["YNOTE_PERS"],
         "recommended": ["YNOTE_SESS", "YNOTE_CSTK"],
         "verify": "youdao",
-        "howto": "登录 note.youdao.com → F12 → Application → Cookies，重点是 YNOTE_PERS 与 YNOTE_SESS",
+        "howto": "推荐：站点配置里点「扫码登录」，用有道云笔记 App 扫面板二维码；手动方式：登录 note.youdao.com → F12 → Application → Cookies，重点是 YNOTE_PERS 与 YNOTE_SESS",
     },
     "IQIYI": {
         "label": "爱奇艺",
@@ -130,7 +130,7 @@ SITE_META: dict[str, dict] = {
         "required": ["uid", "openid", "openkey"],
         "recommended": ["muid"],
         "verify": None,
-        "howto": "登录 kg.qq.com → F12 → Application → Cookies，uid / openid / openkey 三个都要",
+        "howto": "推荐：站点配置里点「扫码登录」，用全民 K 歌 App 扫面板二维码；手动方式：登录 kg.qq.com → F12 → Application → Cookies，uid / openid / openkey 三个都要",
     },
     "ALIYUN": {
         "label": "阿里云盘",

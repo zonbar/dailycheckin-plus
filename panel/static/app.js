@@ -1032,8 +1032,8 @@
 
   function paintBqr(src, expires, text) {
     const box = $("sqImg");
-    const img = qrSrc(src);
-    if (img) {
+    if (src) {
+      const img = qrSrc(src);
       box.innerHTML = `<img src="${esc(img)}" alt="登录二维码">`;
       box.querySelector("img").addEventListener("error", () => {
         box.textContent = "二维码图片加载失败，请点「换一张」";
@@ -1043,6 +1043,14 @@
     }
     $("sqStatus").textContent = text;
     if (expires != null && expires > 0) $("sqSub").textContent = `二维码约 ${expires} 秒后过期，过期请点「换一张」`;
+  }
+
+  // 确认后用面板自己的字体画成功态：无头浏览器截图里的中文会变成方框。
+  function paintBqrDone(text) {
+    const box = $("sqImg");
+    box.innerHTML = '<div class="qr-done"><span class="qr-done-mark"></span><span class="qr-done-text"></span></div>';
+    box.querySelector(".qr-done-text").textContent = text;
+    $("sqStatus").textContent = text;
   }
 
   async function openSiteQr(key, index) {
@@ -1087,17 +1095,18 @@
     try {
       const r = await api(bqrApi(`/status?id=${encodeURIComponent(BQR.sid)}`));
       BQR.failStreak = 0;
-      if (r.qrcode) paintBqr(r.qrcode, r.expires_in, r.status === "confirmed" ? "登录成功" : "等待扫码");
-      else $("sqStatus").textContent = r.status === "confirmed" ? "登录成功" : "等待扫码";
-      if (r.message) $("sqSub").textContent = tidyText(r.message);
-      if (r.hint) $("sqDebug").textContent = tidyText(r.hint);
-
       if (r.status === "confirmed") {
-        stopBqrPoll();
+        paintBqrDone("登录成功");
         BQR.credential = r.credential || null;
         $("sqApply").disabled = !BQR.credential;
         $("sqStatus").textContent = "登录成功，点「保存登录态」生效";
+      } else {
+        if (r.qrcode) paintBqr(r.qrcode, r.expires_in, "等待扫码");
+        else $("sqStatus").textContent = "等待扫码";
+        if (r.message) $("sqSub").textContent = tidyText(r.message);
+        if (r.hint) $("sqDebug").textContent = tidyText(r.hint);
       }
+      if (r.status === "confirmed") stopBqrPoll();
     } catch (e) {
       BQR.failStreak = (BQR.failStreak || 0) + 1;
       if (BQR.failStreak >= 3) {

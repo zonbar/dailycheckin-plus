@@ -77,8 +77,10 @@ class FakeCdp:
 
 # --------------------------------------------------------------------------- #
 section("1) 规则表结构")
-check("可扫码站点不少于 7 个", len(sb.SUPPORTED) >= 7, str(sb.SUPPORTED))
+check("可扫码站点不少于 9 个", len(sb.SUPPORTED) >= 9, str(sb.SUPPORTED))
 check("阿里云盘在支持列表里", "ALIYUN" in sb.SUPPORTED)
+check("全民 K 歌 / 有道云笔记已接入扫码",
+      "KGQQ" in sb.SUPPORTED and "YOUDAO" in sb.SUPPORTED, str(sb.SUPPORTED))
 check("豆包不在通用列表（它有专用通道）", "DOUBAO" not in sb.SUPPORTED)
 check("账密站不冒充扫码入口", not any(
     s in sb.SUPPORTED for s in ("V2EX", "ENSHAN", "FNNASCLUB")), str(sb.SUPPORTED))
@@ -121,6 +123,27 @@ iqy = sb.site_rule("IQIYI")
 check("爱奇艺改从首页登录弹窗取 SVG 码",
       "iqiyi.com" in iqy["login_url"] and "click_login" in iqy
       and any("svg" in s for s in iqy["qr_selectors"]))
+kg = sb.site_rule("KGQQ")
+check("全民 K 歌从登录弹窗取真码，不取首页下载码",
+      "click_login" in kg and "j_login" in kg["click_login"]
+      and ".login_qrcode__img canvas" in kg["qr_selectors"]
+      and not any("mod_code" in s for s in kg["qr_selectors"]))
+check("全民 K 歌取 uid / openid / openkey",
+      kg["domain"] == "qq.com" and "openkey" in kg["ready_cookies"])
+yd = sb.site_rule("YOUDAO")
+check("有道云笔记先切扫码再取码",
+      "signIn" in yd["login_url"] and "login-type-switch" in yd["click_login"]
+      and ".web-qrcode-container img" in yd["qr_selectors"])
+check("有道云笔记按 YNOTE_PERS 判成功",
+      yd["domain"] == "youdao.com" and "YNOTE_PERS" in yd["ready_cookies"])
+
+src = open(os.path.join(ROOT, "panel", "site_browser.py"), encoding="utf-8").read()
+body = src.split("def status(", 1)[-1]
+check("先判登录态再取二维码，避免把成功态浮层当码截图",
+      body.index("ok = bool(value)") < body.index("qr = _qrcode(cdp"))
+check("成功后不再回传浏览器截图",
+      '"status": "confirmed", "site": site, "credential": cred' in body
+      and "qrcode" not in body.split('"status": "confirmed", "site": site, "credential": cred', 1)[1].split("}", 1)[0])
 
 # --------------------------------------------------------------------------- #
 section("3) 凭据提取：localStorage 与 cookie")
@@ -242,6 +265,9 @@ check("扫码入口按钮", 'data-action="site-qr"' in ui)
 check("续期按钮", 'data-action="site-qr-renew"' in ui)
 check("start 走通用 API", '/start' in ui and 'bqrApi' in ui)
 check("apply 走通用 API", 'bqrApi("/apply")' in ui)
+check("通用扫码确认后自绘成功态，不显示方框截图",
+      "paintBqrDone" in ui and "qr-done-text" in ui
+      and 'paintBqrDone("登录成功")' in ui)
 check("手动填写仍保留（表单字段动态渲染）", 'data-field="${esc(f.key)}"' in ui and "refresh_token" in open(os.path.join(ROOT, "panel", "catalog.py"), encoding="utf-8").read())
 
 print("\n" + "=" * 68)

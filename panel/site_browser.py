@@ -158,6 +158,36 @@ RULES: dict[str, dict] = {
         "hint": "请用百度网盘 App 扫码登录；面板会自动取出 BDUSS / STOKEN",
         "manual_howto": "登录 pan.baidu.com → F12 → Application → Cookies，复制 BDUSS 与 STOKEN",
     },
+    "KGQQ": {
+        "login_url": "https://kg.qq.com/",
+        # 首页上 .mod_code canvas 是「下载 App 码」；点右上角登录后才弹真正的扫码框，
+        # 真码在 .login_qrcode__img 里的 198×198 canvas。
+        "click_login": "(()=>{let e=document.querySelector('a.j_login');if(e){e.click();return true}return false})()",
+        "qr_selectors": [
+            ".login_qrcode__img canvas", ".login_qrcode canvas",
+            "[class*=login_qrcode] canvas",
+        ],
+        "credential": "cookie",
+        "domain": "qq.com",
+        "ready_cookies": ["openkey", "uid"],
+        "hint": "请用全民 K 歌 App 扫码登录；面板会自动取出 uid / openid / openkey",
+        "manual_howto": "登录 kg.qq.com → F12 → Application → Cookies，uid / openid / openkey 三个都要",
+    },
+    "YOUDAO": {
+        "login_url": "https://note.youdao.com/signIn/index.html?&callback=https://note.youdao.com/web/&from=web",
+        # 登录页默认是账密 iframe；点右上角切换按钮才出扫码面板，真码是
+        # .web-qrcode-container 下的 data:image/png img（168×168）。
+        "click_login": "(()=>{let e=document.querySelector('.login-type-switch');if(e){e.click();return true}return false})()",
+        "qr_selectors": [
+            ".web-qrcode-container img", "[class*=qrcode-container] img",
+            "[class*=qrcode] img",
+        ],
+        "credential": "cookie",
+        "domain": "youdao.com",
+        "ready_cookies": ["YNOTE_PERS"],
+        "hint": "请用有道云笔记 App 扫码登录；面板会自动取出 YNOTE_PERS / YNOTE_SESS",
+        "manual_howto": "登录 note.youdao.com → F12 → Application → Cookies，重点是 YNOTE_PERS 与 YNOTE_SESS",
+    },
     "V2EX": {
         "login_url": "https://v2ex.com/signin",
         "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
@@ -461,12 +491,10 @@ def status(sid: str) -> dict:
 
         try:
             cdp = one["cdp"]
-            # 二维码会自己翻新，顺带更新给前端
-            qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
-            if qr and qr != one["qrcode"]:
-                one["qrcode"] = qr
-                one["qr_at"] = time.time()
-
+            # 先判登录态，再决定要不要取图：手机上点确认后，页面会立刻把二维码
+            # 换成「对勾 + 登录成功」浮层，这时再按坐标截图就会把浮层（以及无头
+            # 浏览器渲染成方框的中文字）当成二维码回传，面板里就出现乱码图片。
+            # 已经登录时直接返回 confirmed，根本不取图，前端自绘成功态。
             if rule.get("credential") == "localstorage":
                 value, obj = _localstorage(cdp, rule["ls_key"], rule["ls_field"])
                 one["credential_value"], one["credential_obj"] = value, obj
@@ -476,6 +504,12 @@ def status(sid: str) -> dict:
                 one["cookies"].update(found)
                 ready = rule.get("ready_cookies") or []
                 ok = any(k in one["cookies"] for k in ready) if ready else bool(found)
+            if not ok:
+                # 二维码会自己翻新，顺带更新给前端
+                qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
+                if qr and qr != one["qrcode"]:
+                    one["qrcode"] = qr
+                    one["qr_at"] = time.time()
         except Exception as exc:  # noqa: BLE001
             return {
                 "status": "error", "site": site, "expires_in": 0,
