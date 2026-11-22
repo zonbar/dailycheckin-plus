@@ -162,6 +162,8 @@ jobs:
       - name: 引擎溯源与本地补丁（离线校验）
         run: |
           set -e
+          # 豆包自测会 import 整个引擎包（IMA 等站点依赖 Crypto）；测试本身不联网。
+          python3 -m pip install -q -r requirements.txt
           echo "--- 同步工具自测：补丁重放、冲突报错、新站点降级"
           python3 tools/test_sync_upstream.py
           echo "--- 通知模块自测：恒定一条、标题带项目名、结尾是本项目地址"
