@@ -40,6 +40,7 @@ __all__ = [
     "refresh",
     "cancel",
     "apply_cookie",
+    "save_cookie",
     "AUTH_URL",
 ]
 
@@ -514,15 +515,13 @@ def cancel(sid: str) -> dict:
     return {"ok": True}
 
 
-def apply_cookie(sid: str, index: int | None = None) -> dict:
-    """把已确认会话的 Cookie 应用到豆包账号：index=None 新增，否则续期指定账号。"""
+def save_cookie(cookie: str, seed: str, index: int | None = None) -> dict:
+    """把 Cookie 应用到豆包账号池：index=None 新增，否则续期指定账号。
+
+    扫码登录与浏览器登录共用这一份落盘逻辑，避免两条通道写出不同格式。
+    """
     from . import runner, store
 
-    with _LOCK:
-        one = _SESSIONS.get(sid)
-        if not one or one.get("status") != "confirmed":
-            raise ValueError("扫码还没完成，请先确认登录")
-        cookie, seed = one["cookie"], one["seed"]
     data = store.load()
     accounts = store.accounts(data, "DOUBAO")
     if index is None:
@@ -539,3 +538,13 @@ def apply_cookie(sid: str, index: int | None = None) -> dict:
     store.write(data)
     runner.clear_site_status("DOUBAO", "登录态已更新，等待重新校验")
     return {"ok": True, "count": len(accounts), "where": where}
+
+
+def apply_cookie(sid: str, index: int | None = None) -> dict:
+    """把已确认会话的 Cookie 应用到豆包账号：index=None 新增，否则续期指定账号。"""
+    with _LOCK:
+        one = _SESSIONS.get(sid)
+        if not one or one.get("status") != "confirmed":
+            raise ValueError("扫码还没完成，请先确认登录")
+        cookie, seed = one["cookie"], one["seed"]
+    return save_cookie(cookie, seed, index)

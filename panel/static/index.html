@@ -165,8 +165,8 @@
   </div>
 </dialog>
 
-<!-- 扫码登录弹窗：豆包用 passport 二维码拿登录态，二维码每 60 秒过期。
-     独立成一层对话框，盖在站点配置窗之上；扫完确认后自动把 cookie 写回对应账号。 -->
+<!-- 扫码登录弹窗：优先用容器内无头浏览器打开豆包登录弹窗，直接读二维码与 Cookie；
+     浏览器不可用时回退 passport 接口。确认后自动把 cookie 写回对应账号。 -->
 <dialog id="qrDlg" aria-label="扫码登录">
   <div class="dlg-head">
     <b id="qrTitle">扫码登录</b>

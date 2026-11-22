@@ -44,7 +44,7 @@
 
   /* 扫码登录会话：sid 只在本机内存里，二维码确认后服务端才把 cookie 写进配置。
      mode=add 新增账号，mode=renew 只替换指定账号的 cookie/seed（其它账号不动）。 */
-  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0 };
+  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0, channel: "http" };
 
   const STATE = {
     valid: ["valid", "有效", "有效"],
@@ -419,7 +419,7 @@
     const points = site.status && site.status.message ? `<div class="qr-meta">最近校验：${esc(site.status.message)}</div>` : "";
     return `
   ${site.auth === "qr" ? `<div class="qr-banner">
-    <span>🫘 <b>扫码登录</b>：用手机豆包 App 扫码即可拿到登录态，到期可一键续期；下面的手动粘贴 cookie 一样可用。</span>
+    <span>🫘 <b>扫码登录</b>：面板在无头浏览器里打开豆包登录弹窗，用手机豆包 / 飞书 App 扫码即可拿到登录态，到期可一键续期；下面的手动粘贴 cookie 一样可用。</span>
     <button class="tiny primary" data-action="doubao-qr" data-key="${site.key}">扫码登录 / 添加账号</button>
   </div>${points}` : ""}
   ${site.howto ? `<div class="howto"><b>怎么拿 cookie：</b>${esc(site.howto)}${link}</div>` : ""}
@@ -813,39 +813,61 @@
     el.textContent = "passport: " + bits.join(" · ");
   }
 
+  // 优先走「浏览器扫码」：容器内无头浏览器打开豆包登录弹窗，直接读二维码和 Cookie，
+  // 绕开 passport 接口的 2046 风控。浏览器不可用时（镜像没装 / 依赖缺失）回退纯 HTTP。
+  function qrBase() { return QR.channel === "browser" ? "/doubao/browser" : "/doubao/qr"; }
+
   async function openQr(key, index) {
     stopQrPoll();
     QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false; QR.failStreak = 0;
+    QR.channel = "http";
     QR.mode = index == null ? "add" : "renew";
     QR.index = index;
     $("qrTitle").textContent = QR.mode === "renew" ? `续期 · 账号 ${index + 1}` : "扫码登录 · 添加账号";
-    $("qrImg").innerHTML = `<span class="muted">正在获取二维码…</span>`;
-    $("qrStatus").textContent = "正在获取二维码…";
-    $("qrSub").textContent = "用手机豆包 App 扫码，并在手机上点「确认登录」";
-    $("qrAuthLink").textContent = "在浏览器打开豆包 ↗（点右上角「登录」）";
+    $("qrImg").innerHTML = `<span class="muted">正在准备登录窗口…</span>`;
+    $("qrStatus").textContent = "正在准备登录窗口…";
+    $("qrSub").textContent = "请用手机豆包 / 飞书 App 扫码，并在手机上确认";
+    $("qrAuthLink").textContent = "在浏览器打开豆包官网 ↗";
     paintQrDebug(null);
     $("qrRefresh").disabled = true;
     $("qrApply").disabled = true;
     const dlg = $("qrDlg");
     if (!dlg.open) dlg.showModal();
+
+    let started = false;
     try {
-      const r = await api("/doubao/qr/start", { method: "POST", body: {} });
+      const r = await api("/doubao/browser/start", { method: "POST", body: {} });
+      QR.channel = "browser";
       QR.sid = r.id;
       if (r.auth_url) $("qrAuthLink").href = r.auth_url;
       paintQr(r.qrcode, r.expires_in, "等待扫码");
       $("qrRefresh").disabled = false;
-      scheduleQrPoll();
+      started = true;
     } catch (e) {
-      $("qrStatus").textContent = "获取二维码失败";
-      $("qrSub").textContent = e.message;
-      toast("获取二维码失败：" + e.message);
+      // 浏览器通道不可用，自动回退到原来的 passport 扫码
     }
+    if (!started) {
+      try {
+        const r = await api("/doubao/qr/start", { method: "POST", body: {} });
+        QR.channel = "http";
+        QR.sid = r.id;
+        if (r.auth_url) $("qrAuthLink").href = r.auth_url;
+        paintQr(r.qrcode, r.expires_in, "等待扫码");
+        $("qrRefresh").disabled = false;
+      } catch (e) {
+        $("qrStatus").textContent = "获取二维码失败";
+        $("qrSub").textContent = e.message;
+        toast("获取二维码失败：" + e.message);
+        return;
+      }
+    }
+    scheduleQrPoll();
   }
 
   async function pollQr() {
     if (!QR.sid || QR.applying) return;
     try {
-      const r = await api(`/doubao/qr/status?id=${encodeURIComponent(QR.sid)}`);
+      const r = await api(`${qrBase()}/status?id=${encodeURIComponent(QR.sid)}`);
       QR.failStreak = 0;
       const labels = {
         waiting: "等待扫码", scanned: "已扫码，请在手机上确认",
@@ -857,7 +879,13 @@
       if (r.message) $("qrSub").textContent = r.message;
       // 2046 时把弹窗里现成的官网链接改成「去完成验证」：用户不必自己猜去哪验证。
       if (r.status === "verify") $("qrAuthLink").textContent = "在浏览器完成安全验证后继续 ↗";
-      paintQrDebug(r.debug);
+      if (r.mode === "browser") {
+        paintQrDebug(null);
+        const el = $("qrDebug");
+        if (el) el.textContent = "浏览器通道 · 直接读取登录 Cookie";
+      } else {
+        paintQrDebug(r.debug);
+      }
       if (r.status === "confirmed") {
         stopQrPoll();
         QR.cookie = r.cookie;
@@ -888,7 +916,7 @@
     QR.applying = true;
     $("qrApply").disabled = true;
     try {
-      const r = await api("/doubao/qr/apply", {
+      const r = await api(`${qrBase()}/apply`, {
         method: "POST",
         body: { id: QR.sid, index: QR.mode === "renew" ? QR.index : null },
       });
@@ -907,7 +935,7 @@
 
   function closeQr() {
     stopQrPoll();
-    if (QR.sid) api("/doubao/qr/cancel", { method: "POST", body: { id: QR.sid } }).catch(() => {});
+    if (QR.sid) api(`${qrBase()}/cancel`, { method: "POST", body: { id: QR.sid } }).catch(() => {});
     QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false;
   }
 
@@ -1302,7 +1330,7 @@
       if (!QR.sid) return;
       $("qrRefresh").disabled = true;
       try {
-        const r = await api("/doubao/qr/refresh", { method: "POST", body: { id: QR.sid } });
+        const r = await api(`${qrBase()}/refresh`, { method: "POST", body: { id: QR.sid } });
         QR.cookie = null; QR.seed = null;
         $("qrApply").disabled = true;
         paintQr(r.qrcode, r.expires_in, "等待扫码");

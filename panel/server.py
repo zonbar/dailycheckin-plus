@@ -15,9 +15,9 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, autoverify, catalog, cookies as ck, doubao_auth, paths, runner, schedule, store, update, upstream, verify
+from . import auth, autoverify, catalog, cookies as ck, doubao_auth, doubao_browser, paths, runner, schedule, store, update, upstream, verify
 
-PANEL_VERSION = "1.0.3"
+PANEL_VERSION = "1.0.4"
 MAX_BODY = 4 * 1024 * 1024
 
 # 不需要登录就能访问的接口：健康检查（给容器 healthcheck 用）与登录/首次设置本身
@@ -409,6 +409,59 @@ def h_doubao_qr_apply(h):
             raise HttpError(400, "账号序号必须是整数") from exc
     try:
         return doubao_auth.apply_cookie(str(body.get("id") or ""), index)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+
+
+# 浏览器扫码登录：容器内无头浏览器 + CDP 捞 Cookie。
+# 与 passport 纯 HTTP 通道并列；前端优先走这里，浏览器不可用时回退。
+@route("POST", r"/api/doubao/browser/start")
+def h_doubao_browser_start(h):
+    try:
+        return doubao_browser.start()
+    except Exception as exc:  # noqa: BLE001 - 浏览器缺失等错误翻成人话
+        raise HttpError(400, f"浏览器扫码启动失败：{exc}") from exc
+
+
+@route("GET", r"/api/doubao/browser/status")
+def h_doubao_browser_status(h):
+    sid = (h.query.get("id") or [""])[0]
+    try:
+        return doubao_browser.status(sid)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(400, f"查询浏览器登录态失败：{exc}") from exc
+
+
+@route("POST", r"/api/doubao/browser/refresh")
+def h_doubao_browser_refresh(h):
+    sid = str(h.body().get("id") or "")
+    try:
+        return doubao_browser.refresh(sid)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(400, f"换码失败：{exc}") from exc
+
+
+@route("POST", r"/api/doubao/browser/cancel")
+def h_doubao_browser_cancel(h):
+    return doubao_browser.cancel(str(h.body().get("id") or ""))
+
+
+@route("POST", r"/api/doubao/browser/apply")
+def h_doubao_browser_apply(h):
+    """把浏览器登录拿到的 Cookie 写进指定账号（续期）或新增账号。"""
+    body = h.body()
+    index = body.get("index", None)
+    if index is not None:
+        try:
+            index = int(index)
+        except (TypeError, ValueError) as exc:
+            raise HttpError(400, "账号序号必须是整数") from exc
+    try:
+        return doubao_browser.apply_cookie(str(body.get("id") or ""), index)
     except ValueError as exc:
         raise HttpError(400, str(exc)) from exc
 

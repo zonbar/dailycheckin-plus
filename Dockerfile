@@ -10,10 +10,12 @@ ENV LANG=C.UTF-8 \
     PANEL_HOST=0.0.0.0 \
     PANEL_PORT=8080
 
-# cron 负责定时签到，tini 负责正确回收子进程
+# cron 负责定时签到，tini 负责正确回收子进程。
+# chromium 供豆包「浏览器扫码登录」使用：容器内无桌面，用无头模式打开登录弹窗，
+# 由 CDP 读二维码和 HttpOnly 的 sessionid；手动粘贴 Cookie 仍然可用。
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends cron tzdata tini; \
+    apt-get install -y --no-install-recommends cron tzdata tini chromium fonts-liberation; \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo "$TZ" > /etc/timezone; \
     rm -rf /var/lib/apt/lists/*

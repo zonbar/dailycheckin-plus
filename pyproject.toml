@@ -1,11 +1,12 @@
 [project]
 name = "dailycheckin"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
     "pycryptodome==3.17",
     "requests~=2.25.1",
     "rsa~=4.0",
     "urllib3~=1.26.2",
+    "websocket-client==1.8.0",
 ]
 dynamic = ["readme","requires-python","license","authors","classifiers","urls","scripts"]
 

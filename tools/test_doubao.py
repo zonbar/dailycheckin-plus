@@ -528,6 +528,85 @@ with tempfile.TemporaryDirectory(prefix="dc-doubao-test-") as tmp:
 
 
 # --------------------------------------------------------------------------- #
+section("7) 浏览器扫码登录：CDP 直接读二维码与登录 Cookie")
+import base64 as _b64
+import time as _time
+
+from panel import doubao_browser as dbb
+
+
+class _FakeCdp:
+    def __init__(self, qr, cookies=None):
+        self.qr, self.cookies, self.closed = qr, cookies or [], False
+
+    def js(self, expr):
+        return self.qr
+
+    def browser(self, method, params=None):
+        if method == "Storage.getCookies":
+            return {"cookies": self.cookies}
+        if method == "Browser.close":
+            self.closed = True
+        return {}
+
+    def page(self, method, params=None):
+        return {}
+
+    def close(self):
+        pass
+
+
+qr_png = _b64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 32).decode()
+check("二维码从 CSS 背景图里取到 PNG", dbb._qrcode(_FakeCdp(qr_png)) == qr_png)
+only = dbb._cookies(_FakeCdp("", [
+    {"name": "ttwid", "value": "T", "domain": ".doubao.com"},
+    {"name": "sessionid", "value": "S", "domain": "www.doubao.com"},
+    {"name": "other", "value": "O", "domain": "example.com"},
+]))
+check("CDP Cookie 只收豆包域（含 HttpOnly 会话）",
+      only == {"ttwid": "T", "sessionid": "S"}, str(only))
+
+old_ws = dbb.websocket
+dbb.websocket = None
+ok, why = dbb.available()
+check("缺少 CDP 客户端时明确不可用", not ok and "依赖" in why, why)
+dbb.websocket = old_ws
+
+sid = "browser-test-session"
+now = _time.time()
+dbb._SESSION = {
+    "id": sid, "cdp": _FakeCdp(qr_png, [
+        {"name": "sessionid", "value": "SID-X", "domain": ".doubao.com"},
+        {"name": "ttwid", "value": "T", "domain": ".doubao.com"},
+    ]),
+    "proc": None, "profile": "/tmp/not-used", "seed": "browser-seed",
+    "qrcode": qr_png, "qr_at": now, "started_at": now,
+    "status": "waiting", "cookie": "", "cookies": {},
+}
+try:
+    r = dbb.status(sid)
+    check("读到 sessionid 后判为登录成功", r["status"] == "confirmed", str(r)[:160])
+    check("浏览器通道产出可直接落盘的 cookie",
+          "sessionid=SID-X" in r.get("cookie", ""), r.get("cookie", "")[:120])
+    check("浏览器通道保留独立 seed", r.get("seed") == "browser-seed")
+    check("浏览器通道标记 mode=browser 供前端区分", r.get("mode") == "browser")
+finally:
+    dbb._SESSION = None
+
+with open(os.path.join(ROOT, "Dockerfile"), encoding="utf-8") as f:
+    image = f.read()
+with open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8") as f:
+    deps = f.read()
+with open(os.path.join(ROOT, "panel/static/app.js"), encoding="utf-8") as f:
+    ui = f.read()
+check("镜像预装无头浏览器以适配 NAS Docker", "chromium" in image)
+check("依赖包含 CDP 客户端", "websocket-client" in deps)
+check("前端先试浏览器通道再回退 passport",
+      "/doubao/browser/start" in ui and "/doubao/qr/start" in ui)
+check("手动粘贴 Cookie 入口保留", "手动粘贴 cookie" in ui)
+
+
+# --------------------------------------------------------------------------- #
 print("\n" + "=" * 68)
 print(f"通过 {len(passed)} 项，失败 {len(failed)} 项")
 if failed:
