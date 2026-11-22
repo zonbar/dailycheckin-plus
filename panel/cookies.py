@@ -265,12 +265,36 @@ def build(items: list[tuple[str, str]]) -> str:
     return SEP.join(f"{k}={v}" for k, v in items) + ";"
 
 
-def missing_required(items: list[tuple[str, str]], required) -> list[str]:
+def missing_required(items: list[tuple[str, str]], required, aliases=None) -> list[str]:
+    """required 里没出现的字段。
+
+    aliases 是「必填字段 -> 可接受的其他名字」映射，用于 Discuz 那种 cookie
+    前缀会变的站点：required 写的是历史前缀 TWcq_2132_auth，而站点现在实际
+    发的是 rHEX_2132_auth，两者应视为同一个字段，不该误报缺失。
+    """
     have = {k.lower() for k, _ in items}
-    return [k for k in required if k.lower() not in have]
+    aliases = aliases or {}
+    missing = []
+    for key in required:
+        if key.lower() in have:
+            continue
+        # alias 可能是精确名字，也可能是正则模式（Discuz 动态前缀）
+        alias_names = [str(n) for n in (aliases.get(key) or [])]
+        matched = False
+        for name in alias_names:
+            if name.startswith("^") or "\\d" in name or "[" in name:
+                if any(re.match(name, h) for h in have):
+                    matched = True
+                    break
+            elif name.lower() in have:
+                matched = True
+                break
+        if not matched:
+            missing.append(key)
+    return missing
 
 
-def normalize(raw: str, required=(), site: str | None = None) -> CookieResult:
+def normalize(raw: str, required=(), site: str | None = None, aliases=None) -> CookieResult:
     """把任意粘贴形态的 cookie 规范化成引擎可用格式。"""
     result = CookieResult()
 
@@ -304,7 +328,7 @@ def normalize(raw: str, required=(), site: str | None = None) -> CookieResult:
         if not items:
             result.errors.append("没有解析出任何 `名称=值` 片段，请检查是不是复制到了别的内容")
             # 哪怕整体解析失败，也把「这个站点缺哪些必填字段」告诉用户
-            result.missing = list(missing_required([], required))
+            result.missing = list(missing_required([], required, aliases))
             return result
 
     items, duplicated = _dedupe(items)
@@ -313,7 +337,7 @@ def normalize(raw: str, required=(), site: str | None = None) -> CookieResult:
 
     result.items = items
     result.warnings.extend(_inspect(items, strict_eq=(site or "").upper() not in SAFE_EQ_SITES))
-    result.missing = list(missing_required(items, required))
+    result.missing = list(missing_required(items, required, aliases))
     result.cookie = build(items)
     result.ok = bool(items) and not result.missing
     return result

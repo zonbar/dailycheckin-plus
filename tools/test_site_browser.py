@@ -162,14 +162,34 @@ alive_off.js_values = {}  # 成功提示覆盖后 js 返回空
 check("成功提示覆盖后判定为失效", sb._qr_alive(alive_off, es) is False)
 check("恩山配置了 QQ 授权中间页自动确认",
       bool(es.get("after_scan_js")) and "graph.qq.com" in (es.get("after_scan_frames") or []))
+# 真实浏览器实测：恩山现在的 cookie 前缀是 rHEX，不是文档里写的 TWcq。
+# 前缀写死会导致「QQ 已回调、Cookie 已写入」却判不出登录态，一直卡在 confirm_hint。
+AUTH_RE = es["auth_cookie_pattern"]
+check("恩山 auth cookie 按模式识别（兼容 rHEX 等动态前缀）",
+      bool(re.match(AUTH_RE, "rHEX_2132_auth"))
+      and bool(re.match(AUTH_RE, "TWcq_2132_auth"))
+      and not re.match(AUTH_RE, "rHEX_2132_saltkey"))
+check("ready_cookie_patterns 用同一动态前缀模式",
+      AUTH_RE in (es.get("ready_cookie_patterns") or []))
+check("飞牛 auth cookie 同样按模式识别",
+      bool(re.match(sb.site_rule("FNNASCLUB")["auth_cookie_pattern"], "pvRK_2132_auth")))
+# 手动填 cookie 也不该误报缺字段
+aliases = catalog.required_aliases("ENSHAN")
+check("catalog 提供恩山必填字段别名", bool(aliases.get("TWcq_2132_auth")),
+      str(aliases))
+from panel import cookies as ck
+norm = ck.normalize("rHEX_2132_auth=abc; rHEX_2132_saltkey=xyz",
+                    required=["TWcq_2132_auth"], aliases=aliases)
+check("手动粘贴 rHEX 前缀不再误报缺字段", norm.missing == [], str(norm.missing))
 nudge_ok = FakeCdp(contexts=[{"id": 7, "origin": "https://graph.qq.com"}],
-                   js_values={"授权并登录": "1"})
+                   js_values={"class*=btn": "1"})
 check("第三方授权页上自动点确认", sb._nudge_callback(nudge_ok, es) is True)
 nudge_skip = FakeCdp(contexts=[{"id": 8, "origin": "https://www.right.com.cn"}],
                      js_values={"授权并登录": "1"})
 check("站点自己的页面不执行自动点击", sb._nudge_callback(nudge_skip, es) is False)
 check("Discuz 变体 auth cookie 也能判成功",
-      any(re.search(p, "TWcq_12345_auth") for p in es.get("ready_cookie_patterns") or []))
+      bool(re.search(AUTH_RE, "TWcq_2132_auth"))
+      and bool(re.search(AUTH_RE, "rHEX_2132_auth")))
 check("飞牛微信登录后也会停止截图", bool(fnnas.get("qr_alive_js")) and bool(fnnas.get("confirm_hint")))
 
 # 两个百度站点换成随面板打包的官方 App 图标，不依赖外网 favicon

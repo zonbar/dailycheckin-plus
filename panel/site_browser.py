@@ -54,6 +54,11 @@ SESSION_TTL = 900        # 一次登录会话最长 15 分钟
 QR_TTL = 55              # 前端倒计时用
 PNG_URI = "data:image/png;base64,"
 
+# Discuz 的 cookie 前缀（cookiepre）由站点自己配置，会随重装/升级变化：
+# 实测恩山当前是 rHEX_2132_*，飞牛论坛是 pvRK_2132_*，旧文档里的 TWcq_2132_* 已失效。
+# 登录标志固定是 <前缀>_auth，所以按模式识别，不能再写死某个前缀。
+DISCUZ_AUTH_COOKIE = r"^[A-Za-z0-9]{2,16}_2132_auth$"
+
 _LOCK = threading.RLock()
 _SESSIONS: dict[str, dict] = {}   # sid -> 会话（支持同时给不同站点登录）
 
@@ -230,15 +235,18 @@ RULES: dict[str, dict] = {
         # 这里在等待期自动点一次授权按钮，避免用户卡在 confirm_hint 上。
         "after_scan_frames": ["graph.qq.com", "connect.qq.com", "xui.ptlogin2.qq.com"],
         "after_scan_js": "(()=>{let b=[...document.querySelectorAll('a,button,input[type=submit],[class*=btn]')]"
-        ".find(e=>/授权并登录|登录并授权|同意授权|确认登录|立即登录/.test((e.innerText||e.value||'').trim()));"
+        ".find(e=>{let t=(e.innerText||e.value||'').trim();"
+        "return t&&t.length<12&&/登录|授权|同意|确认|允许/.test(t)"
+        "&&!/QQ登录|授权管理|申请接入|找回|注册|切换|绑定|取消|返回|关闭|拒绝/.test(t)});"
         "if(b){b.click();return '1'}return ''})()",
         "credential": "cookie",
         "domain": "right.com.cn",
+        # 保留旧前缀兼容，关键是通用模式：真实浏览器里恩山是 rHEX_2132_auth。
         "ready_cookies": ["TWcq_2132_auth"],
-        # Discuz 不同版本的 cookie 前缀会随 appid 变；前缀 + _auth 一律认作登录态。
-        "ready_cookie_patterns": [r"^TWcq_\d+_auth$"],
+        "ready_cookie_patterns": [DISCUZ_AUTH_COOKIE],
+        "auth_cookie_pattern": DISCUZ_AUTH_COOKIE,
         "hint": "请用 QQ 手机版扫码登录恩山；面板会自动取出登录 Cookie",
-        "manual_howto": "登录 right.com.cn → F12 → Application → Cookies，复制 TWcq_2132_auth 与 saltkey",
+        "manual_howto": "登录 right.com.cn → F12 → Application → Cookies，整块复制包含 xxx_2132_auth 与 xxx_2132_saltkey 的 Cookie（前缀以实际页面为准）",
     },
     "FNNASCLUB": {
         # 右上角微信图标（img.qq_bind）点开的是 xigua_login 插件：
@@ -258,6 +266,8 @@ RULES: dict[str, dict] = {
         "credential": "cookie",
         "domain": "fnnas.com",
         "ready_cookies": ["pvRK_2132_auth"],
+        "ready_cookie_patterns": [DISCUZ_AUTH_COOKIE],
+        "auth_cookie_pattern": DISCUZ_AUTH_COOKIE,
         "confirm_hint": "已扫码，正在完成微信授权，请稍候…",
         "confirm_hint_long": "微信授权回调还没完成，请确认手机上已点「确认登录」。若一直没反应，可关闭本窗口改用手动 Cookie：",
         "hint": "请用微信扫码登录飞牛 NAS 论坛；面板会自动取出登录 Cookie",
@@ -618,9 +628,19 @@ def status(sid: str) -> dict:
                 try:
                     from . import catalog
 
+                    def satisfied(key: str) -> bool:
+                        if key in one["cookies"]:
+                            return True
+                        # Discuz 前缀可变：required 里写的是旧前缀，只要按模式找到了
+                        # 同类 auth cookie（如 rHEX_2132_auth），就算这个字段齐了。
+                        pat = rule.get("auth_cookie_pattern") or ""
+                        if pat and key.endswith("_auth"):
+                            if any(re.search(pat, name) for name in one["cookies"]):
+                                return True
+                        return False
+
                     missing = [
-                        k for k in catalog.required_of(site)
-                        if k not in one["cookies"]
+                        k for k in catalog.required_of(site) if not satisfied(k)
                     ]
                 except Exception:  # noqa: BLE001
                     missing = []

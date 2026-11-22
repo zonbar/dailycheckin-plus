@@ -110,9 +110,10 @@ SITE_META: dict[str, dict] = {
         "emoji": "📡",
         "group": "论坛",
         "required": ["TWcq_2132_auth"],
+        "required_patterns": [r"^[A-Za-z0-9]{2,16}_2132_auth$"],
         "recommended": ["TWcq_2132_saltkey"],
         "verify": "enshan",
-        "howto": "推荐配置弹窗「扫码登录」用 QQ 扫码自动填；手动则登录 right.com.cn → F12 → Application → Cookies，复制 TWcq_2132_* 字段",
+        "howto": "推荐配置弹窗「扫码登录」用 QQ 扫码自动填；手动则登录 right.com.cn → F12 → Application → Cookies，整块复制含 xxx_2132_auth 的 Cookie（前缀以页面实际显示为准）",
     },
     "FNNASCLUB": {
         "label": "飞牛 NAS 论坛",
@@ -431,6 +432,18 @@ def site_meta(key: str) -> dict:
 
 def required_of(key: str) -> list[str]:
     return list(site_meta(key).get("required") or [])
+
+
+def required_aliases(key: str) -> dict[str, list[str]]:
+    """必填字段可接受的其他名字/模式；用于 cookie 前缀会变的站点。
+
+    Discuz 站点（如恩山）的 cookie 前缀由站点配置，会随重装变化：文档里写的
+    ``TWcq_2132_auth`` 现在实际是 ``rHEX_2132_auth``。这里把这些字段的正则
+    模式交给 cookie 校验，避免手动粘贴新前缀时被误报「缺必填字段」。
+    """
+    meta = SITE_META.get(str(key or "").upper(), {})
+    patterns = meta.get("required_patterns") or []
+    return {k: list(patterns) for k in meta.get("required") or []}
 
 
 def coerce_field(key: str, field_key: str, value):
