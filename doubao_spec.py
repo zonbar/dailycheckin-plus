@@ -54,3 +54,34 @@ def account_seed(account: dict) -> str:
     if seed:
         return seed
     return hashlib.sha256(str((account or {}).get("cookie") or "").encode("utf-8")).hexdigest()[:32]
+
+
+def tidy_text(value) -> str:
+    """把外部接口返回的中文修成可读文本，避免面板上出现方块/问号乱码。
+
+    豆包 passport 偶尔把中文按 latin-1 解成 mojibake（例如「登录成功」变成
+    「鐧诲綍鎴愬姛」/「ç™»å½•」）。这类文本的码点都落在 latin-1 区间，重新按
+    latin-1 编回字节、再用 UTF-8 解码即可还原。只有还原后确实出现汉字、
+    且原串更像 mojibake 时才替换，正常文本原样返回。
+    """
+    text = str(value or "")
+    if not text:
+        return ""
+    # 含 U+FFFD 替换符说明原始字节已经丢失，没法还原，别再加工。
+    if "\ufffd" in text:
+        return text
+    try:
+        raw = text.encode("latin-1")
+    except UnicodeEncodeError:
+        return text  # 有 latin-1 之外的字符，本来就是正常 Unicode
+    try:
+        fixed = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return text
+    if fixed == text:
+        return text
+    han = lambda s: sum("\u4e00" <= c <= "\u9fff" for c in s)
+    # 还原后汉字变多（或原串被转义成 latin-1 怪符号）才认为修复有效。
+    if han(fixed) > han(text):
+        return fixed
+    return text

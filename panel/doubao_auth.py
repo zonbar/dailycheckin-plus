@@ -22,6 +22,7 @@ seed 在换码 / 续期时保持不变，保证设备号稳定、不会被当成
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import secrets
 import ssl
@@ -31,6 +32,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.client import HTTPMessage
+
+import doubao_spec
 
 from . import cookies as ck
 
@@ -95,6 +98,28 @@ def _set_cookies(headers: HTTPMessage | None) -> dict:
     return out
 
 
+def _body(raw: bytes, headers: HTTPMessage | None) -> str:
+    """把 passport 响应体解成可读 UTF-8 文本。
+
+    豆包的 passport 接口偶尔会用 gzip 回包、或把中文按 latin-1 转义，
+    直接 ``raw.decode("utf-8", "replace")`` 会把中文变成方块/乱码 —— 这正是
+    手机点确认后弹窗里出现乱码的原因。这里统一解压、强制 UTF-8，再做一次
+    mojibake 还原；校验层 ``verify.http`` 早已这么处理，这里补齐同一套逻辑。
+    """
+    if not raw:
+        return ""
+    if headers and str(headers.get("Content-Encoding") or "").lower() == "gzip":
+        try:
+            raw = gzip.decompress(raw)
+        except OSError:
+            pass  # 声称 gzip 却不是，按原字节继续解
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - 兜底，理论上 decode 不会抛
+        text = ""
+    return doubao_spec.tidy_text(text)
+
+
 def _get(
     url: str,
     cookies: dict,
@@ -122,7 +147,7 @@ def _get(
             req.add_header("Cookie", _serialize(merged))
         try:
             with opener.open(req, timeout=timeout) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
+                body = _body(resp.read(), resp.headers)
                 found.update(_set_cookies(resp.headers))
                 return resp.status, body, found
         except urllib.error.HTTPError as exc:
@@ -135,7 +160,7 @@ def _get(
                     continue
             body = ""
             try:
-                body = exc.read().decode("utf-8", errors="replace")
+                body = _body(exc.read(), exc.headers)
             except Exception:  # noqa: BLE001
                 pass
             return exc.code, body, found
@@ -355,7 +380,7 @@ def status(sid: str) -> dict:
         inner = data.get("data") or {}
         raw_code = inner.get("error_code", data.get("error_code", 0))
         code = int(raw_code) if raw_code not in (None, "") else 0
-        desc = str(inner.get("description") or data.get("message") or "")
+        desc = doubao_spec.tidy_text(inner.get("description") or data.get("message") or "")
         state = str(inner.get("status") or "")
         one["state"] = state
         redirect = str(inner.get("redirect_url") or "")

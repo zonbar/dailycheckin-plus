@@ -42,6 +42,24 @@
   const esc = (v) =>
     String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  /* 外部接口偶尔把中文按 latin-1 回传（「登录成功」变「鐧诲綍鎴愬姛」），
+     直接用 textContent 显示就是乱码。后端已清洗一次，这里再兜一层：
+     码点全在 latin-1 区间、且按 UTF-8 重解后汉字变多，才替换。 */
+  function tidyText(v) {
+    let s = String(v == null ? "" : v);
+    if (!s || s.indexOf("\uFFFD") >= 0) return s;
+    let bytes;
+    try {
+      bytes = new Uint8Array([...s].map((c) => c.charCodeAt(0) & 0xff));
+      if ([...s].some((c) => c.charCodeAt(0) > 0xff)) return s;
+    } catch (_) { return s; }
+    let fixed;
+    try { fixed = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch (_) { return s; }
+    const han = (x) => (x.match(/[\u4e00-\u9fa5]/g) || []).length;
+    return han(fixed) > han(s) ? fixed : s;
+  }
+
   /* 扫码登录会话：sid 只在本机内存里，二维码确认后服务端才把 cookie 写进配置。
      mode=add 新增账号，mode=renew 只替换指定账号的 cookie/seed（其它账号不动）。 */
   const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0, channel: "http", channelNote: "" };
@@ -818,9 +836,9 @@
   function paintQrDebug(d) {
     const el = $("qrDebug");
     if (!el) return;
-    const channel = QR.channel === "browser"
+    const channel =       QR.channel === "browser"
       ? "浏览器通道 · 直接读取登录 Cookie"
-      : (QR.channelNote ? `浏览器通道不可用：${QR.channelNote}；已回退 passport` : "");
+      : (QR.channelNote ? tidyText(`浏览器通道不可用：${QR.channelNote}；已回退 passport`) : "");
     if (!d) { el.textContent = channel; return; }
     const bits = [
       `status=${d.status ?? "?"}`,
@@ -830,7 +848,7 @@
       `sessionid=${d.sessionid ? "有" : "无"}`,
       `new_sid=${d.new_sid ? "有" : "无"}`,
     ];
-    if (d.desc) bits.push(`desc=${d.desc}`);
+    if (d.desc) bits.push(`desc=${tidyText(d.desc)}`);
     el.textContent = (channel ? channel + " · " : "") + "passport: " + bits.join(" · ");
   }
 
@@ -868,7 +886,7 @@
     } catch (e) {
       // 浏览器通道不可用，自动回退到原来的 passport 扫码；把失败原因留下来，
       // 免得两条通道都失败时只看到后半段的报错，误以为是豆包官网打不开。
-      QR.channelNote = ((e && e.message) || "启动失败").slice(0, 120);
+      QR.channelNote = tidyText(((e && e.message) || "启动失败").slice(0, 120));
     }
     if (!started) {
       try {
@@ -901,7 +919,7 @@
       };
       if (r.qrcode) paintQr(r.qrcode, r.expires_in, labels[r.status] || "等待扫码");
       else $("qrStatus").textContent = labels[r.status] || "等待扫码";
-      if (r.message) $("qrSub").textContent = r.message;
+      if (r.message) $("qrSub").textContent = tidyText(r.message);
       // 2046 时把弹窗里现成的官网链接改成「去完成验证」：用户不必自己猜去哪验证。
       if (r.status === "verify") $("qrAuthLink").textContent = "在浏览器完成安全验证后继续 ↗";
       if (r.mode === "browser") {

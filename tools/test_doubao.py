@@ -724,6 +724,30 @@ finally:
 
 
 # --------------------------------------------------------------------------- #
+# 中文乱码清洗：手机确认后弹窗/校验文案不能出现方块或 latin-1 mojibake
+# --------------------------------------------------------------------------- #
+moji = "登录成功".encode("utf-8").decode("latin-1")  # UTF-8 字节被按 latin-1 误读
+check("latin-1 mojibake 还原成汉字", doubao_spec.tidy_text(moji) == "登录成功",
+      doubao_spec.tidy_text(moji))
+check("正常中文不被误改", doubao_spec.tidy_text("登录成功，点「保存」生效") == "登录成功，点「保存」生效")
+check("纯英文不被误改", doubao_spec.tidy_text("confirmed / sessionid") == "confirmed / sessionid")
+check("含替换符的文本保持原样", doubao_spec.tidy_text("登录\ufffd成功") == "登录\ufffd成功")
+check("空值安全", doubao_spec.tidy_text(None) == "" and doubao_spec.tidy_text("") == "")
+
+import gzip as _gzip
+from email.message import Message as _Message
+
+_hdr = _Message()
+_hdr["Content-Encoding"] = "gzip"
+_gz = _gzip.compress("登录成功，点「保存」或「续期」生效".encode("utf-8"))
+check("gzip 响应体解压成可读中文",
+      doubao_auth._body(_gz, _hdr) == "登录成功，点「保存」或「续期」生效",
+      doubao_auth._body(_gz, _hdr))
+check("非 gzip 的 UTF-8 响应体正常解码",
+      doubao_auth._body("登录成功".encode("utf-8"), None) == "登录成功")
+
+
+# --------------------------------------------------------------------------- #
 print("\n" + "=" * 68)
 print(f"通过 {len(passed)} 项，失败 {len(failed)} 项")
 if failed:

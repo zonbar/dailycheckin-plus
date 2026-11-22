@@ -408,7 +408,8 @@ def v_doubao(cookie: str, account: dict) -> dict:
     if code == DOUBAO_NO_ACTIVITY:
         return bad("这个豆包账号没有每日签到活动（个人账号才有，工作版 / 飞书企业账号没有）")
     if code != 0:
-        return unknown(f"豆包任务面板返回 code={code}：{data.get('msg') or data.get('message') or ''}")
+        detail = doubao_spec.tidy_text(data.get("msg") or data.get("message") or "")
+        return unknown(f"豆包任务面板返回 code={code}：{detail}")
     payload = data.get("data") or {}
     tasks = payload.get("tasks") or []
     task = next((t for t in tasks if isinstance(t, dict) and t.get("task_kind") == "daily_signin"), None)
