@@ -85,6 +85,7 @@ class CDP:
             page["webSocketDebuggerUrl"], timeout=CDP_TIMEOUT
         )
         self._id = 0
+        self.events: list[dict] = []  # Runtime 事件留给跨 iframe 取二维码用
 
     def call(self, ws, method: str, params: dict | None = None) -> dict:
         self._id += 1
@@ -93,7 +94,10 @@ class CDP:
         while True:
             msg = json.loads(ws.recv())
             if msg.get("id") != mid:
-                continue  # 忽略事件通知
+                # 执行上下文创建/销毁是 Runtime 事件，不挂 id；留着才能定位 iframe。
+                if msg.get("method", "").startswith("Runtime."):
+                    self.events.append(msg)
+                continue
             if "error" in msg:
                 raise CdpError(str(msg["error"].get("message") or msg["error"]))
             return msg.get("result") or {}
@@ -104,11 +108,24 @@ class CDP:
     def browser(self, method: str, params: dict | None = None) -> dict:
         return self.call(self.browser_ws, method, params)
 
-    def js(self, expression: str):
-        result = self.page("Runtime.evaluate", {
-            "expression": expression, "returnByValue": True,
-        }).get("result") or {}
+    def js(self, expression: str, context_id: int | None = None):
+        params: dict = {"expression": expression, "returnByValue": True}
+        if context_id is not None:
+            params["contextId"] = context_id
+        result = self.page("Runtime.evaluate", params).get("result") or {}
         return result.get("value")
+
+    def contexts(self) -> list[dict]:
+        """Runtime 开启后见过的所有 JS 上下文（含跨域 iframe）。"""
+        self.page("Runtime.enable")
+        out: dict[int, dict] = {}
+        for event in self.events:
+            if event.get("method") != "Runtime.executionContextCreated":
+                continue
+            ctx = ((event.get("params") or {}).get("context") or {})
+            if isinstance(ctx.get("id"), int):
+                out[ctx["id"]] = ctx
+        return list(out.values())
 
     def close(self) -> None:
         for ws in (self.page_ws, self.browser_ws):

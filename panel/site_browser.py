@@ -65,6 +65,8 @@ _SESSIONS: dict[str, dict] = {}   # sid -> 会话（支持同时给不同站点�
 #   login_url      登录页地址（直接打开就到登录/扫码）
 #   click_login    可选 JS：落在首页时点「登录」进入登录弹窗/页
 #   qr_selectors   二维码元素选择器（按序尝试，命中第一个可见的截图）
+#   qr_frame       二维码在跨域 iframe 里时，从内到外列出所属域名；坐标会逐层加上 iframe 偏移
+#   qr_supported   False 表示该站没有可用扫码登录，不展示扫码入口（只能手动填凭据）
 #   credential     "cookie" | "localstorage"
 #   domain         cookie 类：只收集域名含此串的 cookie
 #   ready_cookies  cookie 类：这些 cookie 出现即判定登录成功（任意一个）
@@ -79,9 +81,12 @@ _SESSIONS: dict[str, dict] = {}   # sid -> 会话（支持同时给不同站点�
 RULES: dict[str, dict] = {
     "ALIYUN": {
         "login_url": "https://www.alipan.com/sign/in",
+        # 首页那个 .qrcode canvas 是「下载 App」的码，不是登录码。真正的登录码在
+        # www → auth → passport 两层跨域 iframe 里，必须按上下文取，不能按顶层 DOM 取。
+        "qr_frame": ["passport.alipan.com", "auth.alipan.com"],
         "qr_selectors": [
-            ".qrcode canvas", ".qrcode-box canvas", "[class*=qrcode] canvas",
-            ".qrcode img", "[class*=qrcode] img",
+            "#qrcode-img canvas", "#qrcode-img", ".qrcode-login canvas",
+            ".qrcode-login img",
         ],
         "credential": "localstorage",
         "ls_key": "token",
@@ -106,8 +111,8 @@ RULES: dict[str, dict] = {
     "WEIBO": {
         "login_url": "https://passport.weibo.cn/signin/login?entry=mweibo",
         "qr_selectors": [
-            "[class*=qrcode] canvas", ".qrcode canvas", "canvas",
-            "[class*=qrcode] img",
+            'img[src*="qr.weibo.cn"]', "[class*=qrcode] canvas", ".qrcode canvas",
+            "canvas", "[class*=qrcode] img",
         ],
         "credential": "cookie",
         "domain": "weibo.cn",
@@ -116,10 +121,12 @@ RULES: dict[str, dict] = {
         "manual_howto": "登录 m.weibo.cn → F12 → Application → Cookies，复制 SUB（值末尾的 = 不要删）",
     },
     "IQIYI": {
-        "login_url": "https://passport.iqiyi.com/pages/action/login/index.htm",
+        # 老 passport 登录页已经 404；现在从首页登录弹窗取二维码（页面内是内联 SVG）。
+        "login_url": "https://www.iqiyi.com/",
+        "click_login": "(()=>{let e=document.querySelector('#btn_user');if(e){e.click();return true}return false})()",
         "qr_selectors": [
+            "[class*=_qrBox_] svg", "[class*=qrBox] svg", "[class*=_qrBox_]",
             "[class*=qrcode] canvas", ".qrcode canvas", "canvas",
-            "[class*=qr] img",
         ],
         "credential": "cookie",
         "domain": "iqiyi.com",
@@ -154,6 +161,7 @@ RULES: dict[str, dict] = {
     "V2EX": {
         "login_url": "https://v2ex.com/signin",
         "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
+        "qr_supported": False,  # 只有账密登录，无头浏览器里用户没法交互
         "credential": "cookie",
         "domain": "v2ex.com",
         "ready_cookies": ["A2"],
@@ -161,8 +169,12 @@ RULES: dict[str, dict] = {
         "manual_howto": "登录 v2ex.com → F12 → Application → Cookies，复制 A2",
     },
     "SMZDM": {
-        "login_url": "https://sso.smzdm.com/",
-        "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
+        # sso.smzdm.com 已经解析不到；登录弹窗实际来自 zhiyou.smzdm.com。
+        "login_url": "https://zhiyou.smzdm.com/user/login/window/?redirect_url=https%3A%2F%2Fwww.smzdm.com%2F",
+        "qr_selectors": [
+            ".login-container__qrcode-real", ".login-container__qrcode-content canvas",
+            "[class*=qrcode] canvas", "canvas",
+        ],
         "credential": "cookie",
         "domain": "smzdm.com",
         "ready_cookies": ["s"],
@@ -172,6 +184,7 @@ RULES: dict[str, dict] = {
     "ENSHAN": {
         "login_url": "https://www.right.com.cn/forum/member.php?mod=logging&action=login",
         "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
+        "qr_supported": False,  # Discuz 账密页，没有扫码入口
         "credential": "cookie",
         "domain": "right.com.cn",
         "ready_cookies": ["auth"],
@@ -181,6 +194,7 @@ RULES: dict[str, dict] = {
     "FNNASCLUB": {
         "login_url": "https://club.fnnas.com/member.php?mod=logging&action=login",
         "qr_selectors": ["[class*=qrcode] canvas", "canvas"],
+        "qr_supported": False,  # Discuz 账密页，没有扫码入口
         "credential": "cookie",
         "domain": "fnnas.com",
         "ready_cookies": ["auth"],
@@ -202,7 +216,8 @@ def site_rule(site: str) -> dict | None:
 
 
 def supported() -> list[str]:
-    return sorted(RULES)
+    """只列真的能扫码的站点；账密站留在 RULES 里仅供凭据字段参考。"""
+    return sorted(k for k, v in RULES.items() if v.get("qr_supported") is not False)
 
 
 # 兼容调用方可能用的名字
@@ -220,23 +235,79 @@ def available() -> tuple[bool, str]:
 # 二维码提取
 # --------------------------------------------------------------------------- #
 _QR_RECT_JS = """(sel)=>{let e=document.querySelector(sel);if(!e)return '';
+// img 刚挂上 DOM 时 src 已存在但像素还没到，截图会是一张白板；等 naturalWidth 出来。
+if(e.tagName==='IMG'&&(!e.complete||!e.naturalWidth))return '';
 let r=e.getBoundingClientRect();if(r.width<40||r.height<40)return '';
 e.scrollIntoView({block:'center'});r=e.getBoundingClientRect();
 return JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height})}"""
 
+# OOPIF 的 frameElement 在子上下文里经常是 null；反过来让父页面按 src 找 iframe，
+# 读取它嵌入父页面时的位置。多层 iframe 逐层相加，就得到二维码在顶层 viewport 的坐标。
+_IFRAME_RECT_JS = """(mark)=>{let e=[...document.querySelectorAll('iframe')]
+.find(f=>(f.src||'').includes(mark));if(!e)return '';
+let r=e.getBoundingClientRect();return JSON.stringify({x:r.x,y:r.y})}"""
 
-def _qrcode(cdp: CDP, selectors: list[str]) -> str:
-    """在页面里找第一个可见的二维码元素，截图返回 data URI。
+
+def _eval_context(cdp: CDP, mark: str, expression: str):
+    """在域名含 mark 的 JS 上下文（含跨域 iframe）里执行一段表达式。"""
+    contexts = getattr(cdp, "contexts", None)
+    if not callable(contexts):
+        return ""
+    for ctx in contexts():
+        hay = " ".join(str(ctx.get(key) or "") for key in ("origin", "name"))
+        if mark not in hay:
+            continue
+        try:
+            return cdp.js(expression, ctx["id"]) or ""
+        except Exception:  # noqa: BLE001 - 导航中上下文会短暂失效，下一轮再取
+            return ""
+    return ""
+
+
+def _frame_offset(cdp: CDP, frames: list[str]) -> tuple[float, float]:
+    x = y = 0.0
+    contexts = getattr(cdp, "contexts", None)
+    if not callable(contexts):
+        return x, y
+    for mark in frames:
+        expr = f"({_IFRAME_RECT_JS})({json.dumps(mark)})"
+        for ctx in contexts():
+            try:
+                raw = cdp.js(expr, ctx["id"])
+            except Exception:  # noqa: BLE001 - 已销毁的上下文/导航中，换下一个
+                continue
+            if not raw:
+                continue
+            try:
+                rect = json.loads(raw)
+                x += float(rect.get("x") or 0)
+                y += float(rect.get("y") or 0)
+            except (TypeError, ValueError):
+                continue
+            break
+    return x, y
+
+
+def _qrcode(cdp: CDP, selectors: list[str], frames: list[str] | None = None) -> str:
+    """在页面（或指定 iframe）里找可见二维码，截图返回 data URI。
 
     截图而非取 canvas.toDataURL：拿到的是用户实际看到的完整二维码，
-    也不受跨域 canvas 污染影响。
+    也不受跨域 canvas 污染影响。frames 从内到外列出 iframe 所属域名，
+    避免把外层页面上的「下载 App 码」误当成登录码。
     """
+    frames = list(frames or [])
+    offset_x, offset_y = _frame_offset(cdp, frames) if frames else (0.0, 0.0)
+    # 有 frames 时只在最内层 iframe 里找；没有就走顶层页面。
+    target = frames[0] if frames else ""
     for sel in list(selectors) + GENERIC_QR_SELECTORS:
         try:
-            raw = cdp.js(f"({_QR_RECT_JS})({json.dumps(sel)})")
+            expr = f"({_QR_RECT_JS})({json.dumps(sel)})"
+            raw = _eval_context(cdp, target, expr) if target else cdp.js(expr)
             if not raw:
                 continue
             clip = json.loads(raw)
+            clip["x"] = float(clip.get("x") or 0) + offset_x
+            clip["y"] = float(clip.get("y") or 0) + offset_y
             clip["scale"] = 3
             shot = cdp.page("Page.captureScreenshot", {
                 "format": "png", "clip": clip, "captureBeyondViewport": False,
@@ -327,7 +398,7 @@ def _open_login(cdp: CDP, rule: dict) -> str:
                 pass
             time.sleep(0.5)
     for _ in range(40):
-        qr = _qrcode(cdp, rule.get("qr_selectors") or [])
+        qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
         if qr:
             return qr
         time.sleep(0.5)
@@ -337,8 +408,8 @@ def _open_login(cdp: CDP, rule: dict) -> str:
 def start(site: str) -> dict:
     site = str(site or "").upper()
     rule = site_rule(site)
-    if not rule:
-        raise ValueError(f"站点 {site} 暂不支持浏览器登录，请手动填写凭据")
+    if not rule or rule.get("qr_supported") is False:
+        raise ValueError(f"站点 {site} 没有可用的扫码登录，请手动填写凭据")
     available_ok, why = available()
     if not available_ok:
         raise RuntimeError(why)
@@ -391,7 +462,7 @@ def status(sid: str) -> dict:
         try:
             cdp = one["cdp"]
             # 二维码会自己翻新，顺带更新给前端
-            qr = _qrcode(cdp, rule.get("qr_selectors") or [])
+            qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
             if qr and qr != one["qrcode"]:
                 one["qrcode"] = qr
                 one["qr_at"] = time.time()

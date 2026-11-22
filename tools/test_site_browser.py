@@ -38,16 +38,27 @@ def section(title):
 class FakeCdp:
     """够用的 CDP 替身：js 按表达式返回预设值，browser 返回预设 cookies。"""
 
-    def __init__(self, js_values=None, cookies=None, shot=""):
+    def __init__(self, js_values=None, cookies=None, shot="", frames=None, contexts=None):
         self.js_values = js_values or {}
         self.cookies = cookies or []
         self.shot = shot
+        self.frames = frames or {}
+        self.contexts_value = contexts or []
+        self.calls = []
 
-    def js(self, expr):
+    def js(self, expr, context_id=None):
+        if "querySelectorAll('iframe')" in expr:
+            for mark, rect in self.frames.items():
+                if mark in expr:
+                    return json.dumps(rect)
+            return ""
         for key, value in self.js_values.items():
             if key in expr:
                 return value
         return ""
+
+    def contexts(self):
+        return self.contexts_value
 
     def browser(self, method, params=None):
         if method == "Storage.getCookies":
@@ -55,6 +66,7 @@ class FakeCdp:
         return {}
 
     def page(self, method, params=None):
+        self.calls.append((method, params))
         if method == "Page.captureScreenshot":
             return {"data": self.shot}
         return {}
@@ -65,9 +77,16 @@ class FakeCdp:
 
 # --------------------------------------------------------------------------- #
 section("1) 规则表结构")
-check("支持站点不少于 8 个", len(sb.SUPPORTED) >= 8, str(sb.SUPPORTED))
+check("可扫码站点不少于 7 个", len(sb.SUPPORTED) >= 7, str(sb.SUPPORTED))
 check("阿里云盘在支持列表里", "ALIYUN" in sb.SUPPORTED)
 check("豆包不在通用列表（它有专用通道）", "DOUBAO" not in sb.SUPPORTED)
+check("账密站不冒充扫码入口", not any(
+    s in sb.SUPPORTED for s in ("V2EX", "ENSHAN", "FNNASCLUB")), str(sb.SUPPORTED))
+try:
+    sb.start("V2EX")
+    check("账密站启动扫码会被拒", False)
+except ValueError:
+    check("账密站启动扫码会被拒", True)
 for key, rule in sb.RULES.items():
     ok = bool(rule.get("login_url", "").startswith("https://"))
     ok = ok and rule.get("credential") in ("cookie", "localstorage")
@@ -86,6 +105,22 @@ check("从 token 的 refresh_token 字段取", ali["ls_key"] == "token" and ali[
 check("回填字段是 refresh_token", ali["emit_key"] == "refresh_token")
 check("登录页指向 alipan.com", "alipan.com" in ali["login_url"])
 check("二维码选择器含 canvas", any("canvas" in s for s in ali["qr_selectors"]))
+check("登录码在 passport iframe 里取，不是首页下载码",
+      ali.get("qr_frame") == ["passport.alipan.com", "auth.alipan.com"]
+      and "#qrcode-img canvas" in ali["qr_selectors"])
+check("选择器不再命中首页下载码", not any("qrcode-box" in s for s in ali["qr_selectors"]))
+
+wb = sb.site_rule("WEIBO")
+check("微博按二维码图片地址取码",
+      any("qr.weibo.cn" in s for s in wb["qr_selectors"]))
+zdm = sb.site_rule("SMZDM")
+check("值得买登录地址改用实际域名", "zhiyou.smzdm.com" in zdm["login_url"])
+check("值得买选择器命中真实 canvas",
+      ".login-container__qrcode-real" in zdm["qr_selectors"])
+iqy = sb.site_rule("IQIYI")
+check("爱奇艺改从首页登录弹窗取 SVG 码",
+      "iqiyi.com" in iqy["login_url"] and "click_login" in iqy
+      and any("svg" in s for s in iqy["qr_selectors"]))
 
 # --------------------------------------------------------------------------- #
 section("3) 凭据提取：localStorage 与 cookie")
@@ -123,6 +158,29 @@ qr = sb._qrcode(cdp_qr, [".qrcode canvas"])
 check("截图返回 data:image/png data URI", qr == sb.PNG_URI + shot_b64, qr[:40])
 cdp_noqr = FakeCdp()
 check("找不到二维码时返回空", sb._qrcode(cdp_noqr, [".nope"]) == "")
+
+# 跨域 iframe：子上下文里只拿到二维码的局部坐标，两个父 iframe 的偏移要逐层累加。
+frame_cdp = FakeCdp(
+    js_values={"scrollIntoView": '{"x":5,"y":7,"width":112,"height":112}'},
+    shot=shot_b64,
+    frames={
+        "passport.alipan.com": {"x": 100, "y": 60},
+        "auth.alipan.com": {"x": 20, "y": 30},
+    },
+    contexts=[
+        {"id": 1, "origin": "https://www.alipan.com"},
+        {"id": 2, "origin": "https://auth.alipan.com"},
+        {"id": 3, "origin": "https://passport.alipan.com"},
+    ],
+)
+qr_frame = sb._qrcode(frame_cdp, ["#qrcode-img canvas"],
+                      ["passport.alipan.com", "auth.alipan.com"])
+clip = next((p.get("clip") or {} for m, p in frame_cdp.calls if m == "Page.captureScreenshot"), {})
+check("img 类型二维码等像素加载完再截图",
+      "e.complete" in sb._QR_RECT_JS and "e.naturalWidth" in sb._QR_RECT_JS)
+check("iframe 内二维码截图坐标逐层累加",
+      qr_frame == sb.PNG_URI + shot_b64
+      and clip.get("x") == 125 and clip.get("y") == 97, str(clip))
 
 # --------------------------------------------------------------------------- #
 section("5) apply 落盘：新增与续期")
