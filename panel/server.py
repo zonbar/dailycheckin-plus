@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import auth, autoverify, catalog, cookies as ck, doubao_auth, doubao_browser, paths, runner, schedule, store, update, upstream, verify
 
-PANEL_VERSION = "1.0.8"
+PANEL_VERSION = "1.0.9"
 MAX_BODY = 4 * 1024 * 1024
 
 # 不需要登录就能访问的接口：健康检查（给容器 healthcheck 用）与登录/首次设置本身
@@ -618,16 +618,37 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self._send(status, body, "application/json; charset=utf-8", extra)
 
-    def body(self) -> dict:
+    def _read_body(self) -> None:
+        """在任何分发之前把请求体读干净。
+
+        HTTP/1.1 keep-alive 下，如果某个 POST 处理函数不调用 body()（例如
+        /api/backups/.../restore 只带一个空的 `{}`），请求体字节会残留在
+        socket 上。浏览器复用同一连接发下一条请求时，http.server 会把残留
+        字节当成新的请求行，解析出非法方法并返回裸 501 —— 表现为「恢复配置
+        成功，但紧接着页面刷新报 501」。统一预读即可根治，与处理函数是否
+        消费 body 无关。
+        """
+        self._body_raw = b""
+        self._body_too_large = False
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
         if length <= 0:
-            return {}
+            return
         if length > MAX_BODY:
+            # 读到上限即可，避免超大 body 把连接 hang 住；body() 随后抛 413
+            self._body_raw = self.rfile.read(MAX_BODY)
+            self._body_too_large = True
+            return
+        self._body_raw = self.rfile.read(length)
+
+    def body(self) -> dict:
+        if self._body_too_large:
             raise HttpError(413, "请求体过大")
-        raw = self.rfile.read(length)
+        raw = self._body_raw
+        if not raw:
+            return {}
         try:
             data = json.loads(raw.decode("utf-8"))
         except Exception as exc:  # noqa: BLE001
@@ -683,6 +704,9 @@ class Handler(BaseHTTPRequestHandler):
         self.path_only = urllib.parse.unquote(parsed.path)
         self.query = urllib.parse.parse_qs(parsed.query)
         self._pending_cookie = ""
+        # 先消费请求体：即使本请求因鉴权失败/路由不匹配而提前返回，也不把
+        # 未读字节留给 keep-alive 上的下一条请求（否则会解析出 501）。
+        self._read_body()
 
         for route_method, pattern, name in ROUTES:
             m = pattern.match(self.path_only)
@@ -720,6 +744,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):  # noqa: N802
         self._dispatch("PUT")
+
+    # 下面几个方法本面板不用，但要显式定义：否则 BaseHTTPRequestHandler
+    # 会直接回一个 HTML 版 501，前端 res.json() 解析不到 error 字段，
+    # 用户只会看到「请求失败 (HTTP 501)」这种没头没尾的提示。
+    def do_DELETE(self):  # noqa: N802
+        self._dispatch("DELETE")
+
+    def do_PATCH(self):  # noqa: N802
+        self._dispatch("PATCH")
+
+    def do_HEAD(self):  # noqa: N802
+        self._dispatch("GET")  # 按 GET 路由，_send 不会写 body
+
+    def do_OPTIONS(self):  # noqa: N802
+        self._dispatch("OPTIONS")
 
     # ----- 静态文件 -----
     def _static(self, path: str):
