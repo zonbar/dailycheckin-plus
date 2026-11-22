@@ -211,8 +211,9 @@ RULES: dict[str, dict] = {
             "[class*=qrcode] canvas", "canvas",
         ],
         # 扫码后页面轮询到 status=5，真码 canvas 会被换成「扫描成功 / 请在手机上
-        # 确认登录」状态层；手机端还要过图形验证码才会写 s cookie。这段窗口期
-        # 若不停止截图，就会把状态层（无头里渲染成方框）当码回传。
+        # 确认登录」状态层；手机端还要过图形验证码，服务端才在轮询接口里下发
+        # 登录 cookie。这段窗口期若不停止截图，就会把状态层（无头里渲染成方框）
+        # 当码回传。
         "qr_alive_js": "(()=>{let e=document.querySelector('.login-container__qrcode-real');"
         "if(!e||!e.width)return '';"
         "let t=document.body.innerText||'';"
@@ -222,9 +223,13 @@ RULES: dict[str, dict] = {
         "confirm_hint_long": "还没检测到登录成功，请确认手机上已完成图形验证码并点了确认登录。若一直没反应，可关闭本窗口改用手动 Cookie：",
         "credential": "cookie",
         "domain": "smzdm.com",
-        "ready_cookies": ["s"],
+        # 实测（抓 ajax_auth_login_poll_qrcode 的 Set-Cookie）：登录态是 sess
+        # (HttpOnly) + user + smzdm_id，根本不下发老字段 s。之前死等 s 导致
+        # 手机已登录却一直判不出成功。未登录时这些字段是 deleted 会被浏览器删除，
+        # 所以只要 user / smzdm_id 出现即为登录成功。
+        "ready_cookies": ["user", "smzdm_id"],
         "hint": "请扫码或登录什么值得买；面板会自动取出登录 Cookie",
-        "manual_howto": "登录 smzdm.com → F12 → Application → Cookies，整块复制（关键是 s）",
+        "manual_howto": "登录 smzdm.com → F12 → Application → Cookies，整块复制（关键是 sess / user / smzdm_id）",
     },
     "ENSHAN": {
         # Discuz 账密页没有码，但「快捷登录」里的 QQ 互联会跳到 graph.qq.com，

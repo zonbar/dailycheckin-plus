@@ -707,12 +707,17 @@ dialog::backdrop { background: rgba(10, 14, 22, .5); backdrop-filter: blur(3px);
 /* 登录成功用面板自己的字体画，不能沿用无头浏览器截图：容器没中文字体时
    截图里的「登录成功」会变成一堆方框。对勾用纯 CSS 边框画，不依赖字形。 */
 .qr-done {
-  display: flex; flex-direction: column; align-items: center; gap: 14px;
-  color: var(--fg); font-size: 15px; font-weight: 600;
+  /* 成功态被塞进 .qr-img（写死白底）里；深色主题下 --fg 是浅色，落在白底上
+     会看不清。这里自己铺一层主题表面色，并显式给足对比，脱离外层白底。 */
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  background: var(--surface); color: var(--fg);
+  font-size: 15px; font-weight: 600;
 }
+.qr-done-text { color: var(--fg); text-shadow: none; }
 .qr-done-mark {
   position: relative; width: 58px; height: 58px; border-radius: 50%;
-  background: var(--brand);
+  background: var(--ok);  /* 成功绿配白勾，深浅主题下对比都够 */
 }
 .qr-done-mark::after {
   content: ""; position: absolute; left: 19px; top: 13px;

@@ -151,6 +151,13 @@ check("按钮内容显式居中（width:100% 的按钮才不会把文字挤到�
 check("登录/首次设置那个整行按钮用的是 .block（走上面这条居中）",
       'class="primary block" id="gateSubmit"' in html)
 
+check("扫码成功态自带主题表面背景，不依赖 .qr-img 写死的白底（深色主题文字才看得清）",
+      re.search(r"\.qr-done\s*\{[^}]*background:\s*var\(--surface\)", css) is not None)
+check("扫码成功态文字显式用主题前景色",
+      re.search(r"\.qr-done-text\s*\{[^}]*color:\s*var\(--fg\)", css) is not None)
+check("成功对勾用成功绿配白勾，深浅主题都有对比",
+      re.search(r"\.qr-done-mark\s*\{[^}]*background:\s*var\(--ok\)", css) is not None)
+
 print("7) 站点配置走弹窗，不再就地展开卡片")
 check("index.html 里有站点配置弹窗", re.search(r'<dialog id="siteDlg"', html) is not None)
 check("弹窗内容区带 data-key（表单事件靠它认站点）", re.search(r'id="siteDlgBody"[^>]*data-key', html) is not None)

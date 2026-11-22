@@ -85,7 +85,7 @@ SITE_META: dict[str, dict] = {
         "required": [],
         "recommended": ["s", "__ckguid"],
         "verify": "smzdm",
-        "howto": "登录 smzdm.com → F12 → Application → Cookies，整块复制（关键是 s 会话字段）",
+        "howto": "登录 smzdm.com → F12 → Application → Cookies，整块复制（关键是 sess / user / smzdm_id 会话字段）",
     },
     "BAIDUWP": {
         "label": "百度网盘",

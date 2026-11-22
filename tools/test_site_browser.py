@@ -137,6 +137,11 @@ check("值得买配置了扫码后存活检测与图形验证码提示",
       "login-container__qrcode-real" in zdm.get("qr_alive_js", "")
       and "扫描成功" in zdm.get("qr_alive_js", "")
       and "图形验证码" in zdm.get("confirm_hint", ""))
+# 实测 poll 接口的 Set-Cookie：登录态是 sess(HttpOnly)+user+smzdm_id，
+# 根本不下发老字段 s；死等 s 会导致手机已登录却判不出成功。
+check("值得买按真实登录 cookie 字段判成功（非老的 s）",
+      "user" in zdm["ready_cookies"] and "smzdm_id" in zdm["ready_cookies"]
+      and "s" not in zdm["ready_cookies"])
 zdm_alive = FakeCdp(contexts=[{"id": 2, "origin": "https://zhiyou.smzdm.com"}])
 zdm_alive.js_values = {"qrcode-real": "1"}
 check("值得买初始码有效", sb._qr_alive(zdm_alive, zdm) is True)
