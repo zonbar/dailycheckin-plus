@@ -296,12 +296,16 @@ DEFAULT_META = {
 # 所以它的 LOGO 在无代理环境下会自然回退成 emoji。
 SITE_LINKS: dict[str, dict[str, str]] = {
     "BILIBILI": {"site": "https://www.bilibili.com/", "logo": "https://www.bilibili.com/favicon.ico"},
-    "TIEBA": {"site": "https://tieba.baidu.com/", "logo": "https://tieba.baidu.com/favicon.ico"},
+    # 贴吧官网 /favicon.ico 是百度的通用熊掌，不是贴吧自己的图标；
+    # 这里改用官方 App 图标（App Store 上的百度贴吧），随面板一起打包，不依赖外网。
+    "TIEBA": {"site": "https://tieba.baidu.com/", "logo": "/static/icons/tieba.png"},
     "YOUDAO": {"site": "https://note.youdao.com/", "logo": "https://note.youdao.com/favicon.ico"},
     "IQIYI": {"site": "https://www.iqiyi.com/", "logo": "https://www.iqiyi.com/favicon.ico"},
     "V2EX": {"site": "https://www.v2ex.com/", "logo": "https://www.v2ex.com/favicon.ico"},
     "SMZDM": {"site": "https://www.smzdm.com/", "logo": "https://www.smzdm.com/favicon.ico"},
-    "BAIDUWP": {"site": "https://pan.baidu.com/", "logo": "https://www.baidu.com/favicon.ico"},
+    # pan.baidu.com/favicon.ico 是 404，之前用的 www.baidu.com/favicon.ico 是百度通用熊掌；
+    # 这里改用百度网盘官方 App 图标，随面板一起打包。
+    "BAIDUWP": {"site": "https://pan.baidu.com/", "logo": "/static/icons/baiduwp.png"},
     "AOLAXING": {"site": "https://www.100bt.com/", "logo": "https://www.100bt.com/favicon.ico"},
     "ENSHAN": {"site": "https://www.right.com.cn/forum/", "logo": "https://www.right.com.cn/forum/favicon.ico"},
     "FNNASCLUB": {"site": "https://club.fnnas.com/", "logo": "https://club.fnnas.com/favicon.ico"},

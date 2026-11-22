@@ -13,6 +13,7 @@
 """
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -159,6 +160,25 @@ check("二维码还在时判定为有效", sb._qr_alive(alive_on, es) is True)
 alive_off = FakeCdp(contexts=[{"id": 3, "origin": "https://xui.ptlogin2.qq.com", "name": ""}])
 alive_off.js_values = {}  # 成功提示覆盖后 js 返回空
 check("成功提示覆盖后判定为失效", sb._qr_alive(alive_off, es) is False)
+check("恩山配置了 QQ 授权中间页自动确认",
+      bool(es.get("after_scan_js")) and "graph.qq.com" in (es.get("after_scan_frames") or []))
+nudge_ok = FakeCdp(contexts=[{"id": 7, "origin": "https://graph.qq.com"}],
+                   js_values={"授权并登录": "1"})
+check("第三方授权页上自动点确认", sb._nudge_callback(nudge_ok, es) is True)
+nudge_skip = FakeCdp(contexts=[{"id": 8, "origin": "https://www.right.com.cn"}],
+                     js_values={"授权并登录": "1"})
+check("站点自己的页面不执行自动点击", sb._nudge_callback(nudge_skip, es) is False)
+check("Discuz 变体 auth cookie 也能判成功",
+      any(re.search(p, "TWcq_12345_auth") for p in es.get("ready_cookie_patterns") or []))
+check("飞牛微信登录后也会停止截图", bool(fnnas.get("qr_alive_js")) and bool(fnnas.get("confirm_hint")))
+
+# 两个百度站点换成随面板打包的官方 App 图标，不依赖外网 favicon
+cat_src = open(os.path.join(ROOT, "panel", "catalog.py"), encoding="utf-8").read()
+check("贴吧 / 网盘改用本地图标",
+      '"/static/icons/tieba.png"' in cat_src and '"/static/icons/baiduwp.png"' in cat_src)
+for icon in ("tieba.png", "baiduwp.png"):
+    path = os.path.join(ROOT, "panel", "static", "icons", icon)
+    check(f"{icon} 已随面板打包", os.path.isfile(path) and os.path.getsize(path) > 1000)
 
 src = open(os.path.join(ROOT, "panel", "site_browser.py"), encoding="utf-8").read()
 body = src.split("def status(", 1)[-1]
@@ -167,7 +187,12 @@ check("先判登录态再取二维码，避免把成功态浮层当码截图",
 check("取图前先过二维码存活检测", body.index("_qr_alive(cdp, rule)") < body.index("qr = _qrcode(cdp"))
 check("进入待回调后锁定不再取图", "if one.get(\"awaiting_callback\"):" in body)
 check("待回调时返回空二维码与友好文案",
-      '"qrcode": "" if waiting_msg else one["qrcode"]' in body)
+      '"qrcode": "" if one.get("awaiting_callback") else one["qrcode"]' in body
+      and 'waiting_msg or rule.get("hint"' in body)
+check("待回调时自动点授权中间页的确认按钮", "_nudge_callback(cdp, rule)" in body)
+check("待回调超过一分钟给出手动 Cookie 兜底", 'waited > 60' in body and 'confirm_hint_long' in body)
+check("cookie 成功判据支持正则（兼容 Discuz cookie 前缀）",
+      "ready_cookie_patterns" in body and "re.search(p, k)" in body)
 check("成功后不再回传浏览器截图",
       '"status": "confirmed", "site": site, "credential": cred' in body
       and "qrcode" not in body.split('"status": "confirmed", "site": site, "credential": cred', 1)[1].split("}", 1)[0])

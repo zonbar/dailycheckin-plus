@@ -225,9 +225,18 @@ RULES: dict[str, dict] = {
         "let t=document.body.innerText||'';"
         "if(/扫描成功|登录成功|扫码成功|授权成功/.test(t))return '';return '1'})()",
         "confirm_hint": "已扫码，正在完成 QQ 授权，请稍候…",
+        "confirm_hint_long": "QQ 授权回调还没完成，请确认手机上已点「确认登录」。若一直没反应，可关闭本窗口改用手动 Cookie：",
+        # 手机确认后 graph.qq.com 有时停在「授权并登录」中间页，不会自己回调恩山；
+        # 这里在等待期自动点一次授权按钮，避免用户卡在 confirm_hint 上。
+        "after_scan_frames": ["graph.qq.com", "connect.qq.com", "xui.ptlogin2.qq.com"],
+        "after_scan_js": "(()=>{let b=[...document.querySelectorAll('a,button,input[type=submit],[class*=btn]')]"
+        ".find(e=>/授权并登录|登录并授权|同意授权|确认登录|立即登录/.test((e.innerText||e.value||'').trim()));"
+        "if(b){b.click();return '1'}return ''})()",
         "credential": "cookie",
         "domain": "right.com.cn",
         "ready_cookies": ["TWcq_2132_auth"],
+        # Discuz 不同版本的 cookie 前缀会随 appid 变；前缀 + _auth 一律认作登录态。
+        "ready_cookie_patterns": [r"^TWcq_\d+_auth$"],
         "hint": "请用 QQ 手机版扫码登录恩山；面板会自动取出登录 Cookie",
         "manual_howto": "登录 right.com.cn → F12 → Application → Cookies，复制 TWcq_2132_auth 与 saltkey",
     },
@@ -236,9 +245,21 @@ RULES: dict[str, dict] = {
         # plugin.php?id=xigua_login:login&qr=1 里直接挂着微信二维码（220×220）。
         "login_url": "https://club.fnnas.com/plugin.php?id=xigua_login:login&qr=1",
         "qr_selectors": ['img[src*="xigua_login/cache"]'],
+        # 微信确认后同样别再截图，否则把成功提示（无头里是方框）当二维码回传。
+        "qr_alive_js": "(()=>{let e=document.querySelector('img[src*=xigua_login/cache]');"
+        "if(!e||!e.naturalWidth)return '';"
+        "let t=document.body.innerText||'';"
+        "if(/登录成功|扫码成功|扫描成功|授权成功/.test(t))return '';return '1'})()",
+        # 微信扫码确认后 open.weixin.qq.com 会出「确认登录」中间页，自动点掉再等回调。
+        "after_scan_frames": ["open.weixin.qq.com", "mp.weixin.qq.com"],
+        "after_scan_js": "(()=>{let b=[...document.querySelectorAll('a,button,[class*=btn]')]"
+        ".find(e=>/确认登录|同意登录|授权登录/.test((e.innerText||'').trim()));"
+        "if(b){b.click();return '1'}return ''})()",
         "credential": "cookie",
         "domain": "fnnas.com",
         "ready_cookies": ["pvRK_2132_auth"],
+        "confirm_hint": "已扫码，正在完成微信授权，请稍候…",
+        "confirm_hint_long": "微信授权回调还没完成，请确认手机上已点「确认登录」。若一直没反应，可关闭本窗口改用手动 Cookie：",
         "hint": "请用微信扫码登录飞牛 NAS 论坛；面板会自动取出登录 Cookie",
         "manual_howto": "登录 club.fnnas.com → F12 → Application → Cookies，复制 pvRK_2132_* 字段",
     },
@@ -379,6 +400,33 @@ def _qr_alive(cdp: CDP, rule: dict) -> bool:
     except Exception:  # noqa: BLE001 - 上下文导航中会短暂失效
         raw = ""
     return raw == "1"
+
+
+def _nudge_callback(cdp: CDP, rule: dict) -> bool:
+    """扫码确认后，替用户点掉第三方授权中间页上的「确认」按钮。
+
+    QQ 互联 / 微信登录在手机确认后，浏览器侧经常还要点一次「授权并登录」
+    才会跳回站点写 cookie。无头浏览器里没人点，面板就一直停在 confirm_hint。
+    只在规则列出的第三方上下文里执行，避免误点站点自己的按钮。
+    """
+    expr = rule.get("after_scan_js") or ""
+    marks = rule.get("after_scan_frames") or []
+    if not expr or not marks:
+        return False
+    contexts = getattr(cdp, "contexts", None)
+    if not callable(contexts):
+        return False
+    clicked = False
+    for ctx in contexts():
+        hay = " ".join(str(ctx.get(key) or "") for key in ("origin", "name"))
+        if not any(mark in hay for mark in marks):
+            continue
+        try:
+            if str(cdp.js(expr, ctx["id"]) or "") == "1":
+                clicked = True
+        except Exception:  # noqa: BLE001 - 上下文正在跳转
+            continue
+    return clicked
 
 
 # --------------------------------------------------------------------------- #
@@ -534,13 +582,19 @@ def status(sid: str) -> dict:
                 found = _cookies(cdp, rule.get("domain", ""))
                 one["cookies"].update(found)
                 ready = rule.get("ready_cookies") or []
-                ok = any(k in one["cookies"] for k in ready) if ready else bool(found)
+                patterns = rule.get("ready_cookie_patterns") or []
+                if ready or patterns:
+                    ok = any(k in one["cookies"] for k in ready) or any(
+                        re.search(p, k) for k in one["cookies"] for p in patterns
+                    )
+                else:
+                    ok = bool(found)
             if not ok:
                 # 二维码会自己翻新，顺带更新给前端；但确认后二维码区域会被
                 # 成功提示覆盖，这时停在上一张有效码，不要截到方框乱码。
                 # 一旦进入「已扫码待回调」就锁定，后续轮询不再取图。
                 if one.get("awaiting_callback"):
-                    pass
+                    _nudge_callback(cdp, rule)
                 elif _qr_alive(cdp, rule):
                     qr = _qrcode(cdp, rule.get("qr_selectors") or [], rule.get("qr_frame"))
                     if qr and qr != one["qrcode"]:
@@ -548,6 +602,8 @@ def status(sid: str) -> dict:
                         one["qr_at"] = time.time()
                 else:
                     one["awaiting_callback"] = True
+                    one["awaiting_at"] = time.time()
+                    _nudge_callback(cdp, rule)
         except Exception as exc:  # noqa: BLE001
             return {
                 "status": "error", "site": site, "expires_in": 0,
@@ -582,9 +638,16 @@ def status(sid: str) -> dict:
 
         remaining = max(0, int(SESSION_TTL - (time.time() - one["started_at"])))
         waiting_msg = one.get("awaiting_callback") and rule.get("confirm_hint")
+        if waiting_msg:
+            waited = time.time() - float(one.get("awaiting_at") or time.time())
+            if waited > 60:
+                waiting_msg = (
+                    rule.get("confirm_hint_long", "第三方授权回调还没完成，请稍候。")
+                    + rule.get("manual_howto", "")
+                )
         return {
             "status": "waiting", "site": site,
-            "qrcode": "" if waiting_msg else one["qrcode"],
+            "qrcode": "" if one.get("awaiting_callback") else one["qrcode"],
             "expires_in": remaining,
             "message": waiting_msg or rule.get("hint", "请用手机扫码登录"),
             "mode": "browser",
