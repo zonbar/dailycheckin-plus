@@ -31,7 +31,7 @@ from pathlib import Path
 from . import paths
 
 __all__ = [
-    "DEFAULT_VERSION", "installed_path", "ensure", "platform_key", "target_dir",
+    "DEFAULT_VERSION", "browser_root", "installed_path", "ensure", "platform_key", "target_dir",
 ]
 
 # 固定版本 + 两个架构的 zip sha256（从官方源实际下载后计算）
@@ -65,11 +65,15 @@ def platform_key() -> str:
     return key
 
 
+def browser_root() -> Path:
+    """浏览器持久根目录：默认 data 卷，可用 DC_BROWSER_DIR 整体改到别处。"""
+    custom = os.environ.get("DC_BROWSER_DIR", "").strip()
+    return Path(custom) if custom else Path(paths.DATA_DIR) / "browser"
+
+
 def target_dir() -> Path:
     """浏览器持久目录。默认在 data 卷里 —— 删容器不删卷就不丢。"""
-    custom = os.environ.get("DC_BROWSER_DIR", "").strip()
-    base = Path(custom) if custom else Path(paths.DATA_DIR) / "browser"
-    return base / f"chrome-headless-shell-{platform_key()}"
+    return browser_root() / f"chrome-headless-shell-{platform_key()}"
 
 
 def installed_path() -> Path | None:
@@ -174,7 +178,9 @@ def ensure(log=print, force: bool = False) -> tuple[bool, str]:
 
         plat = platform_key()
         ver = version()
-        work = Path(paths.DATA_DIR) / "browser" / (".download-" + secrets.token_hex(4))
+        # 临时目录必须跟目标目录同一个根：自定义 DC_BROWSER_DIR 时不能
+        # 再往 data 卷写（CI 里那个目录被 root 容器挂过，宿主用户没权限）。
+        work = browser_root() / (".download-" + secrets.token_hex(4))
         work.mkdir(parents=True, exist_ok=True)
         final = target_dir()
         backup: Path | None = None

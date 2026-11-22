@@ -646,10 +646,16 @@ try:
     with zipfile.ZipFile(fake_zip, "w") as zf:
         zf.writestr(f"chrome-headless-shell-linux64/{bin_name}", "#!/bin/sh\necho fake\n")
 
-    bb._fetch_zip = lambda p, v, w, log: Path(fake_zip)
+    seen_work = []
+    def fake_fetch(p, v, w, log):
+        seen_work.append(str(w))
+        return Path(fake_zip)
+    bb._fetch_zip = fake_fetch
     ok1, msg1 = bb.ensure(log=lambda m: None)
     installed = bb.installed_path()
     check("首次 ensure 下载并落盘", ok1 and installed is not None, msg1)
+    check("下载临时目录也落在自定义持久目录（不会写进 root 挂载的 data 卷）",
+          bool(seen_work) and seen_work[0].startswith(bb_tmp), str(seen_work[:1]))
     check("下载后二进制带可执行位",
           bool(installed) and bool(installed.stat().st_mode & stat.S_IXUSR))
     check("浏览器路径落在自定义持久目录",
