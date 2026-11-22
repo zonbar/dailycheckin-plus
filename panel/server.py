@@ -15,9 +15,9 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import auth, autoverify, catalog, cookies as ck, doubao_auth, doubao_browser, paths, runner, schedule, store, update, upstream, verify
+from . import auth, autoverify, catalog, cookies as ck, doubao_auth, doubao_browser, paths, runner, schedule, site_browser, store, update, upstream, verify
 
-PANEL_VERSION = "1.0.9"
+PANEL_VERSION = "1.0.10"
 MAX_BODY = 4 * 1024 * 1024
 
 # 不需要登录就能访问的接口：健康检查（给容器 healthcheck 用）与登录/首次设置本身
@@ -462,6 +462,71 @@ def h_doubao_browser_apply(h):
             raise HttpError(400, "账号序号必须是整数") from exc
     try:
         return doubao_browser.apply_cookie(str(body.get("id") or ""), index)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+
+
+# --------------------------------------------------------------------------- #
+# 通用站点浏览器登录（Cookie / localStorage）
+# --------------------------------------------------------------------------- #
+@route("GET", r"/api/site-browser/supported")
+def h_site_browser_supported(h):
+    return {
+        "supported": site_browser.SUPPORTED,
+        "available": site_browser.available()[0],
+        "reason": site_browser.available()[1],
+    }
+
+
+@route("POST", r"/api/site-browser/start")
+def h_site_browser_start(h):
+    site = str(h.body().get("site") or "")
+    try:
+        return site_browser.start(site)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - 浏览器缺失等错误翻成人话
+        raise HttpError(400, f"浏览器扫码启动失败：{exc}") from exc
+
+
+@route("GET", r"/api/site-browser/status")
+def h_site_browser_status(h):
+    sid = (h.query.get("id") or [""])[0]
+    try:
+        return site_browser.status(sid)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(400, f"查询浏览器登录态失败：{exc}") from exc
+
+
+@route("POST", r"/api/site-browser/refresh")
+def h_site_browser_refresh(h):
+    sid = str(h.body().get("id") or "")
+    try:
+        return site_browser.refresh(sid)
+    except ValueError as exc:
+        raise HttpError(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HttpError(400, f"换码失败：{exc}") from exc
+
+
+@route("POST", r"/api/site-browser/cancel")
+def h_site_browser_cancel(h):
+    return site_browser.cancel(str(h.body().get("id") or ""))
+
+
+@route("POST", r"/api/site-browser/apply")
+def h_site_browser_apply(h):
+    body = h.body()
+    index = body.get("index", None)
+    if index is not None:
+        try:
+            index = int(index)
+        except (TypeError, ValueError) as exc:
+            raise HttpError(400, "账号序号必须是整数") from exc
+    try:
+        return site_browser.apply(str(body.get("id") or ""), index)
     except ValueError as exc:
         raise HttpError(400, str(exc)) from exc
 

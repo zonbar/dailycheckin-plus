@@ -187,6 +187,26 @@
   </div>
 </dialog>
 
+<dialog id="siteQrDlg" aria-label="扫码登录">
+  <div class="dlg-head">
+    <b id="sqTitle">扫码登录</b>
+    <span class="spacer"></span>
+    <button class="ghost tiny" id="sqClose">关闭</button>
+  </div>
+  <div class="qr-body">
+    <div class="qr-img" id="sqImg"><span class="muted">正在获取二维码…</span></div>
+    <div class="qr-status" id="sqStatus">正在获取二维码…</div>
+    <div class="qr-sub" id="sqSub">请用手机 App 扫码登录</div>
+    <div class="qr-debug" id="sqDebug" aria-live="polite"></div>
+    <div class="row">
+      <a id="sqAuthLink" href="#" target="_blank" rel="noopener noreferrer">在浏览器打开登录页 ↗</a>
+      <span class="spacer"></span>
+      <button class="tiny" id="sqRefresh" disabled>换一张</button>
+      <button class="tiny primary" id="sqApply" disabled>保存登录态</button>
+    </div>
+  </div>
+</dialog>
+
 <div class="overlay" id="overlay"></div>
 
 <aside class="drawer" id="drawer" aria-label="运行与日志">

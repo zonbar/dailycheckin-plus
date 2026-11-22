@@ -178,6 +178,8 @@ jobs:
           python3 tools/test_doubao.py
           echo "--- HTTP keep-alive 自测：恢复配置后刷新不再 501、未定义方法返回 JSON"
           python3 tools/test_http_keepalive.py
+          echo "--- 通用站点扫码自测：规则表、localStorage/cookie 凭据提取、apply 落盘"
+          python3 tools/test_site_browser.py
           echo "--- UPSTREAM.json 溯源信息"
           python3 -c "import json;s=json.load(open('UPSTREAM.json',encoding='utf-8'));print('上游',s['repo'],'@',s['ref'],s['commit'][:10],'| 引擎版本',s['version'],'| 本地补丁',len(s['patches']),'个 | 站点',len(s['engine_sites']),'个');assert s['commit'] and s['engine_sites'] and s['patches']"
           echo "--- 两个本地补丁的代码特征必须在引擎里"

@@ -34,6 +34,7 @@
     sort: SORT_MODES.includes(lsGet("dc_sort")) ? lsGet("dc_sort") : "configured",
     onlyTodo: false,
     runId: null,
+    siteBrowser: { supported: [], available: false, reason: "", loaded: false },
     pollTimer: null,
     logTimer: null,
   };
@@ -63,6 +64,12 @@
   /* 扫码登录会话：sid 只在本机内存里，二维码确认后服务端才把 cookie 写进配置。
      mode=add 新增账号，mode=renew 只替换指定账号的 cookie/seed（其它账号不动）。 */
   const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0, channel: "http", channelNote: "" };
+
+  /* 通用站点扫码登录：与豆包那套独立，避免互相干扰。
+     服务端按站点规则抓 cookie 或 localStorage，成功后 credential 是「字段->值」。 */
+  const BQR = { sid: null, site: null, mode: null, index: null, timer: null, credential: null, applying: false, failStreak: 0 };
+  const bqrApi = (p) => `/site-browser${p}`;
+  const siteCanScan = (key) => !!(key && key !== "DOUBAO" && (S.siteBrowser.supported || []).includes(key));
 
   const STATE = {
     valid: ["valid", "有效", "有效"],
@@ -236,6 +243,16 @@
       throw e;
     }
     S.state = st;
+    // 通用扫码登录支持列表：一次加载，失败就当不支持（不影响其它功能）
+    if (!S.siteBrowser.loaded) {
+      S.siteBrowser.loaded = true;
+      api("/site-browser/supported").then((r) => {
+        S.siteBrowser = { ...r, loaded: true };
+        render();
+        // 若此刻正开着某个站点的配置弹窗，重绘它才能补上扫码入口
+        if (S.dlgKey) paintSiteDialog();
+      }).catch(() => {});
+    }
     currentSites().forEach((site) => {
       if (!S.dirty[site.key]) {
         S.drafts[site.key] = site.accounts.map((a) => ({ ...a }));
@@ -440,6 +457,10 @@
     <span>🫘 <b>扫码登录</b>：面板在无头浏览器里打开豆包登录弹窗，用手机豆包 / 飞书 App 扫码即可拿到登录态，到期可一键续期；下面的手动粘贴 cookie 一样可用。</span>
     <button class="tiny primary" data-action="doubao-qr" data-key="${site.key}">扫码登录 / 添加账号</button>
   </div>${points}` : ""}
+  ${siteCanScan(site.key) ? `<div class="qr-banner">
+    <span>📱 <b>扫码登录</b>：面板在无头浏览器打开 ${esc(site.label)} 登录页，扫码后自动把${site.credential === "cookie" ? " Cookie" : "凭据"}填好，到期可续期；下面的手动填写一样可用。</span>
+    <button class="tiny primary" data-action="site-qr" data-key="${site.key}">扫码登录 / 添加账号</button>
+  </div>` : ""}
   ${site.howto ? `<div class="howto"><b>怎么拿 cookie：</b>${esc(site.howto)}${link}</div>` : ""}
   <div class="row" style="margin:0 0 6px">
     <span class="muted" style="font-size:12px">凭据类型：${site.credential === "cookie" ? "Cookie" : "账号 / 表单"}</span>
@@ -470,6 +491,7 @@
            <div class="row">
              <button class="tiny" data-action="normalize" data-key="${site.key}" data-index="${index}">规范化</button>
              ${site.auth === "qr" ? `<button class="tiny" data-action="doubao-renew" data-key="${site.key}" data-index="${index}" title="登录态过期时重新扫码，只替换这个账号的 cookie 和设备种子">续期</button>` : ""}
+             ${siteCanScan(site.key) ? `<button class="tiny" data-action="site-qr-renew" data-key="${site.key}" data-index="${index}" title="重新扫码，只替换这个账号的登录凭据">续期</button>` : ""}
              ${site.verify ? `<button class="tiny" data-action="verify" data-key="${site.key}">校验 cookie</button>` : ""}
              <span class="spacer"></span>
              <span class="muted" style="font-size:11.5px" data-role="count">${check ? check.count + " 个字段" : ""}</span>
@@ -492,6 +514,7 @@
   <div class="acc-head">
     <b>账号 ${index + 1}</b>
     <span class="spacer"></span>
+    ${siteCanScan(site.key) && site.credential !== "cookie" ? `<button class="tiny" data-action="site-qr-renew" data-key="${site.key}" data-index="${index}" title="重新扫码，只替换这个账号的登录凭据">续期</button>` : ""}
     <button class="ghost tiny" data-action="remove" data-key="${site.key}" data-index="${index}">删除</button>
   </div>
   ${cookieBlock}
@@ -648,6 +671,11 @@
 
     if (action === "doubao-qr" || action === "doubao-renew") {
       openQr(key, action === "doubao-renew" ? index : null);
+      return;
+    }
+
+    if (action === "site-qr" || action === "site-qr-renew") {
+      openSiteQr(key, action === "site-qr-renew" ? index : null);
       return;
     }
 
@@ -978,6 +1006,123 @@
     stopQrPoll();
     if (QR.sid) api(`${qrBase()}/cancel`, { method: "POST", body: { id: QR.sid } }).catch(() => {});
     QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false;
+  }
+
+  /* ---------------- 通用站点扫码登录 ---------------- */
+  function stopBqrPoll() {
+    if (BQR.timer) clearTimeout(BQR.timer);
+    BQR.timer = null;
+  }
+
+  function scheduleBqrPoll() {
+    if (BQR.timer) clearTimeout(BQR.timer);
+    BQR.timer = setTimeout(pollBqr, 1500);
+  }
+
+  function paintBqr(src, expires, text) {
+    const box = $("sqImg");
+    const img = qrSrc(src);
+    if (img) {
+      box.innerHTML = `<img src="${esc(img)}" alt="登录二维码">`;
+      box.querySelector("img").addEventListener("error", () => {
+        box.textContent = "二维码图片加载失败，请点「换一张」";
+      });
+    } else {
+      box.textContent = "二维码准备中…";
+    }
+    $("sqStatus").textContent = text;
+    if (expires != null && expires > 0) $("sqSub").textContent = `二维码约 ${expires} 秒后过期，过期请点「换一张」`;
+  }
+
+  async function openSiteQr(key, index) {
+    if (!S.siteBrowser.available) {
+      toast("浏览器登录不可用" + (S.siteBrowser.reason ? "：" + S.siteBrowser.reason : ""));
+      return;
+    }
+    BQR.mode = index == null ? "add" : "renew";
+    BQR.index = index;
+    BQR.site = key;
+    BQR.credential = null;
+    BQR.applying = false;
+    BQR.failStreak = 0;
+    const site = findSite(key);
+    $("sqTitle").textContent = BQR.mode === "renew"
+      ? `续期 · ${site ? site.label : key} · 账号 ${index + 1}`
+      : `扫码登录 · ${site ? site.label : key}`;
+    $("sqSub").textContent = "正在获取登录二维码…";
+    $("sqDebug").textContent = "";
+    $("sqStatus").textContent = "正在获取二维码…";
+    $("sqImg").innerHTML = '<span class="muted">正在获取二维码…</span>';
+    $("sqAuthLink").href = "#";
+    $("sqRefresh").disabled = true;
+    $("sqApply").disabled = true;
+    $("siteQrDlg").showModal();
+    try {
+      const r = await api(bqrApi("/start"), { method: "POST", body: { site: key } });
+      BQR.sid = r.id;
+      if (r.auth_url) $("sqAuthLink").href = r.auth_url;
+      paintBqr(r.qrcode, r.expires_in, "等待扫码");
+      $("sqSub").textContent = tidyText(r.hint || "请用手机 App 扫码登录");
+      $("sqRefresh").disabled = false;
+      scheduleBqrPoll();
+    } catch (e) {
+      $("sqStatus").textContent = "获取二维码失败";
+      $("sqSub").textContent = tidyText(e.message);
+    }
+  }
+
+  async function pollBqr() {
+    if (!BQR.sid || BQR.applying) return;
+    try {
+      const r = await api(bqrApi(`/status?id=${encodeURIComponent(BQR.sid)}`));
+      BQR.failStreak = 0;
+      if (r.qrcode) paintBqr(r.qrcode, r.expires_in, r.status === "confirmed" ? "登录成功" : "等待扫码");
+      else $("sqStatus").textContent = r.status === "confirmed" ? "登录成功" : "等待扫码";
+      if (r.message) $("sqSub").textContent = tidyText(r.message);
+      if (r.hint) $("sqDebug").textContent = tidyText(r.hint);
+
+      if (r.status === "confirmed") {
+        stopBqrPoll();
+        BQR.credential = r.credential || null;
+        $("sqApply").disabled = !BQR.credential;
+        $("sqStatus").textContent = "登录成功，点「保存登录态」生效";
+      }
+    } catch (e) {
+      BQR.failStreak = (BQR.failStreak || 0) + 1;
+      if (BQR.failStreak >= 3) {
+        $("sqStatus").textContent = "查询登录态失败";
+        $("sqSub").textContent = tidyText((e && e.message) || "请检查网络后重试");
+      }
+    }
+    if (BQR.sid && !BQR.applying) scheduleBqrPoll();
+  }
+
+  async function applyBqr() {
+    if (BQR.applying || !BQR.credential || !BQR.sid) return;
+    BQR.applying = true;
+    $("sqApply").disabled = true;
+    try {
+      const r = await api(bqrApi("/apply"), {
+        method: "POST",
+        body: { id: BQR.sid, index: BQR.mode === "renew" ? BQR.index : null },
+      });
+      S.dirty[r.site || BQR.site] = false;
+      await loadState(true);
+      if (S.dlgKey === (r.site || BQR.site)) paintSiteDialog();
+      toast((BQR.mode === "renew" ? "续期成功" : "已添加账号") + (r.where ? "：" + r.where : ""));
+      $("siteQrDlg").close();
+    } catch (e) {
+      toast("保存失败：" + e.message);
+      $("sqApply").disabled = false;
+    } finally {
+      BQR.applying = false;
+    }
+  }
+
+  function closeBqr() {
+    stopBqrPoll();
+    if (BQR.sid) api(bqrApi("/cancel"), { method: "POST", body: { id: BQR.sid } }).catch(() => {});
+    BQR.sid = null; BQR.credential = null; BQR.applying = false;
   }
 
   /* ======================================================================
@@ -1382,6 +1527,23 @@
     $("qrApply").onclick = () => applyQr();
     $("qrDlg").addEventListener("close", closeQr);
     $("qrDlg").addEventListener("click", (ev) => { if (ev.target === $("qrDlg")) $("qrDlg").close(); });
+    // 通用站点扫码
+    $("sqClose").onclick = () => $("siteQrDlg").close();
+    $("sqRefresh").onclick = async () => {
+      if (!BQR.sid) return;
+      $("sqRefresh").disabled = true;
+      try {
+        const r = await api(bqrApi("/refresh"), { method: "POST", body: { id: BQR.sid } });
+        BQR.credential = null;
+        $("sqApply").disabled = true;
+        paintBqr(r.qrcode, r.expires_in, "等待扫码");
+        $("sqSub").textContent = tidyText(r.hint || "已换新码，请用手机扫码");
+        $("sqRefresh").disabled = false;
+      } catch (e) { toast("换码失败：" + e.message); $("sqRefresh").disabled = false; }
+    };
+    $("sqApply").onclick = () => applyBqr();
+    $("siteQrDlg").addEventListener("close", closeBqr);
+    $("siteQrDlg").addEventListener("click", (ev) => { if (ev.target === $("siteQrDlg")) $("siteQrDlg").close(); });
     $("search").oninput = render;
     $("filter").onchange = render;
     $("groupFilter").onchange = render;

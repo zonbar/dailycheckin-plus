@@ -139,9 +139,12 @@ SITE_META: dict[str, dict] = {
         "required": [],
         "credential": "form",
         "verify": None,
-        "howto": "refresh_token 通过 aliyun 开放接口获取，本项目不提供自动化抓取，请参考原项目文档",
+        "howto": "推荐用上面的「扫码登录」：面板打开阿里云盘登录页，扫码后自动从浏览器取出 refresh_token。"
+        "手动方式：登录 www.alipan.com → F12 → Console → 执行 "
+        "copy(JSON.parse(localStorage.token).refresh_token)，把结果粘到下面字段",
         "fields": [
-            {"key": "refresh_token", "label": "refresh_token", "type": "secret", "required": True},
+            {"key": "refresh_token", "label": "refresh_token", "type": "secret", "required": True,
+             "help": "扫码登录会自动填好；手动获取见上方说明"},
         ],
     },
     "IMAOTAI": {
