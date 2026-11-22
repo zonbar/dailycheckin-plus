@@ -628,7 +628,8 @@ from panel import browser_bootstrap as bb
 
 bb_tmp = tempfile.mkdtemp(prefix="dc-browser-test-")
 os.environ["DC_BROWSER_DIR"] = bb_tmp
-os.environ.pop("DOUBAO_BROWSER", None)
+# CI runner 自带 google-chrome；指一个不存在的路径，强制走「下载到持久卷」这条分支。
+os.environ["DOUBAO_BROWSER"] = "/nonexistent/doubao-browser-test"
 _real_platform = bb.platform_key
 _real_fetch = bb._fetch_zip
 bb.platform_key = lambda: "linux64"
@@ -672,6 +673,7 @@ try:
     check("下载失败后仍保留上一次的浏览器", bb.installed_path() is not None)
 
     # 自动发现：browser_path 找到持久卷里的浏览器
+    os.environ.pop("DOUBAO_BROWSER", None)
     from panel import doubao_browser as dbb2
     check("浏览器通道能自动发现持久卷里的 shell",
           dbb2.browser_path() == str(bb.installed_path()))
