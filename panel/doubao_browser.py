@@ -5,10 +5,12 @@
 这和"面板自拉浏览器、用户登录后收集会话"是同一条路，区别只在容器里没有桌面，
 固定用无头模式，并把二维码从页面里取出来显示到面板上。
 
-二维码不是 img 标签，而是登录弹窗里 ``[data-testid=qrcode_switcher]`` 的
-CSS background-image（data:image/png;base64,...），直接从 JS 取即可。
-取出来必须补回 ``data:`` 前缀再给前端：只给裸 base64 的话 ``<img src>``
-会当成相对路径，弹窗里就是一片空白（「二维码加载不出来」的直接原因）。
+真正的登录二维码在 ``[data-testid=qrcode_image]`` 里，是一个 162×162 的
+**内联 SVG**；``[data-testid=qrcode_switcher]`` 只是隐藏的装饰图标（0×0、
+蓝色斜切的半张 QR 图），早先误取它才导致面板里只显示半张图。
+优先用 CDP 对真实的二维码元素截图（PNG，约 17 KiB）；截图失败再退回
+序列化 SVG / 背景图。任何返回给前端的图都必须带 ``data:`` 前缀，否则
+``<img src>`` 会当相对路径处理，弹窗空白。
 
 每次登录都用全新 profile + 独立调试端口，账号之间不会串登录态。
 ``--no-sandbox`` / ``--disable-dev-shm-usage`` 是为在 Docker（含 NAS 自带的
@@ -17,6 +19,7 @@ Docker）里跑起来；浏览器缺失时直接报错，由面板引导用户�
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -213,13 +216,24 @@ def _terminate(proc: subprocess.Popen | None, profile: str | Path) -> None:
 
 
 _PNG_URI = "data:image/png;base64,"
+_SVG_URI = "data:image/svg+xml;base64,"
 
-_QR_JS = r"""(()=>{let e=document.querySelector('[data-testid=qrcode_switcher]');
-if(!e)return '';
-let m=(getComputedStyle(e).backgroundImage||'').match(/data:image\/png;base64,([^"')]+)/);
-if(m)return m[1];
-let img=e.querySelector('img[src^="data:image/png;base64,"]');
-return img?img.getAttribute('src'):''})()"""
+# 真实二维码：162×162 内联 SVG；switcher 是 0×0 的装饰图，绝不能再取它。
+_QR_RECT_JS = r"""(()=>{let e=document.querySelector('[data-testid=qrcode_image]');
+if(!e)return '';let r=e.getBoundingClientRect();
+if(r.width<40||r.height<40)return '';
+return JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height})})()"""
+
+_QR_JS = r"""(()=>{let s=document.querySelector('[data-testid=qrcode_image] svg');
+if(s)return JSON.stringify({mime:'image/svg+xml',data:s.outerHTML});
+let e=document.querySelector('[data-testid=qrcode_image] img[src^="data:image/"]');
+if(e)return JSON.stringify({mime:'image/png',data:e.getAttribute('src')});
+return ''})()"""
+
+_LOGIN_JS = r"""(()=>{let b=document.querySelector('[data-testid=to_login_button]');
+if(b){b.click();return true}
+let e=[...document.querySelectorAll('button')].find(
+ x=>/^登录$|^登陆$/.test((x.textContent||'').trim()));if(e){e.click();return true}return false})()"""
 
 
 def _qr_uri(raw: str) -> str:
@@ -229,13 +243,49 @@ def _qr_uri(raw: str) -> str:
         return ""
     if text.startswith("data:") or re.match(r"^https?://", text, re.I):
         return text
+    try:
+        obj = json.loads(text)
+    except (TypeError, ValueError):
+        obj = None
+    if isinstance(obj, dict):
+        data = str(obj.get("data") or "").strip()
+        if obj.get("mime") == "image/svg+xml" and data:
+            # HTML 里的 outerHTML 会省略默认 xmlns，独立当 SVG 打开必须补上。
+            if "<svg" in data and "xmlns=" not in data.split(">", 1)[0]:
+                data = data.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"', 1)
+            return _SVG_URI + base64.b64encode(data.encode("utf-8")).decode("ascii")
+        return _qr_uri(data)
     return _PNG_URI + "".join(text.split())
 
-_LOGIN_JS = r"""(()=>{let e=[...document.querySelectorAll('button')].find(
- e=>/^登录$|^登陆$/.test((e.textContent||'').trim()));if(e){e.click();return true}return false})()"""
+
+def _qr_screenshot(cdp: CDP) -> str:
+    """对真实二维码元素截图：体积比内联 SVG 小一个数量级，也不怕 SVG 命名空间。"""
+    try:
+        raw = cdp.js(_QR_RECT_JS)
+        rect = json.loads(raw) if raw else None
+        if not isinstance(rect, dict):
+            return ""
+        clip = {
+            "x": float(rect["x"]), "y": float(rect["y"]),
+            "width": float(rect["width"]), "height": float(rect["height"]),
+            "scale": 2,
+        }
+        if clip["width"] < 40 or clip["height"] < 40:
+            return ""
+        shot = cdp.page("Page.captureScreenshot", {
+            "format": "png", "clip": clip, "captureBeyondViewport": False,
+        })
+        data = str((shot or {}).get("data") or "")
+    except Exception:  # noqa: BLE001 - 截图失败还有 SVG 兜底
+        return ""
+    return _PNG_URI + data if data else ""
 
 
 def _qrcode(cdp: CDP) -> str:
+    # 先截图：拿到的一定是用户实际看到的完整二维码（不是隐藏的 switcher 图标）。
+    uri = _qr_screenshot(cdp)
+    if uri:
+        return uri
     try:
         return _qr_uri(cdp.js(_QR_JS))
     except Exception:  # noqa: BLE001 - 页面导航中取不到，下一轮再试

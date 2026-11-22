@@ -61,7 +61,7 @@ TITLE = f"{message.PROJECT_NAME} 每日签到"
 CONTENT = [
     "「V2EX 论坛」\n帐号信息: BZGOGO\n今日签到: 20261016 的每日登录奖励 13 铜币\n帐号余额: 38259.34",
     "「哔哩哔哩」\n第 1 个账号: ✅✅✅✅✅",
-    f"开始时间: 2026-10-16 09:00:01\n任务用时: 0 秒\n当前版本: 1.0.6\n最新版本: 1.0.6\n项目地址: {message.PROJECT_URL}",
+    f"开始时间: 2026-10-16 09:00:01\n任务用时: 0 秒\n当前版本: 1.0.7\n最新版本: 1.0.7\n项目地址: {message.PROJECT_URL}",
 ]
 
 TG = {"tg_bot_token": "BOT", "tg_user_id": "123"}

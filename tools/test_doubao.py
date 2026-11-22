@@ -564,6 +564,34 @@ check("已是 data URI 的二维码不被重复加前缀",
       dbb._qr_uri(qr_uri) == qr_uri)
 check("带空白的裸 base64 也能规整成 data URI",
       dbb._qr_uri("  " + qr_png[:8] + "\n" + qr_png[8:] + "  ") == qr_uri)
+
+class _ShotCdp(_FakeCdp):
+    def __init__(self):
+        super().__init__("")
+        self.calls = []
+    def js(self, expr):
+        if "getBoundingClientRect" in expr:
+            return json.dumps({"x": 10, "y": 20, "width": 162, "height": 162})
+        return ""
+    def page(self, method, params=None):
+        self.calls.append((method, params))
+        if method == "Page.captureScreenshot":
+            return {"data": qr_png}
+        return {}
+
+shot = _ShotCdp()
+check("优先对真实的 qrcode_image 元素截图",
+      dbb._qrcode(shot) == qr_uri and shot.calls[0][0] == "Page.captureScreenshot")
+check("截图只裁二维码区域并放大 2 倍",
+      shot.calls[0][1]["clip"]["width"] == 162 and shot.calls[0][1]["clip"]["scale"] == 2)
+svg = '<svg width="162" height="162"><rect fill="#000000"/></svg>'
+svg_uri = dbb._qr_uri(json.dumps({"mime": "image/svg+xml", "data": svg}))
+check("SVG 兜底补命名空间再编码成 data URI",
+      svg_uri.startswith(dbb._SVG_URI)
+      and 'xmlns="http://www.w3.org/2000/svg"'
+      in _b64.b64decode(svg_uri.split(",", 1)[1]).decode("utf-8"))
+check("登录按钮优先用官方 data-testid 点击", "to_login_button" in dbb._LOGIN_JS)
+
 only = dbb._cookies(_FakeCdp("", [
     {"name": "ttwid", "value": "T", "domain": ".doubao.com"},
     {"name": "sessionid", "value": "S", "domain": "www.doubao.com"},
