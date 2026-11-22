@@ -557,7 +557,13 @@ class _FakeCdp:
 
 
 qr_png = _b64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 32).decode()
-check("二维码从 CSS 背景图里取到 PNG", dbb._qrcode(_FakeCdp(qr_png)) == qr_png)
+qr_uri = dbb._PNG_URI + qr_png
+check("二维码从 CSS 背景图取到并补成可显示的 data URI",
+      dbb._qrcode(_FakeCdp(qr_png)) == qr_uri, dbb._qrcode(_FakeCdp(qr_png))[:40])
+check("已是 data URI 的二维码不被重复加前缀",
+      dbb._qr_uri(qr_uri) == qr_uri)
+check("带空白的裸 base64 也能规整成 data URI",
+      dbb._qr_uri("  " + qr_png[:8] + "\n" + qr_png[8:] + "  ") == qr_uri)
 only = dbb._cookies(_FakeCdp("", [
     {"name": "ttwid", "value": "T", "domain": ".doubao.com"},
     {"name": "sessionid", "value": "S", "domain": "www.doubao.com"},
@@ -580,7 +586,7 @@ dbb._SESSION = {
         {"name": "ttwid", "value": "T", "domain": ".doubao.com"},
     ]),
     "proc": None, "profile": "/tmp/not-used", "seed": "browser-seed",
-    "qrcode": qr_png, "qr_at": now, "started_at": now,
+    "qrcode": qr_uri, "qr_at": now, "started_at": now,
     "status": "waiting", "cookie": "", "cookies": {},
 }
 try:
@@ -604,6 +610,11 @@ check("镜像不再内置浏览器（首启下载到持久化卷）",
 check("依赖包含 CDP 客户端", "websocket-client" in deps)
 check("前端先试浏览器通道再回退 passport",
       "/doubao/browser/start" in ui and "/doubao/qr/start" in ui)
+check("前端对裸 base64 二维码兜底补 data 前缀",
+      "function qrSrc" in ui and '"data:image/png;base64," + s.replace' in ui)
+check("前端显示浏览器通道失败原因", "QR.channelNote" in ui)
+check("二维码图片加载失败时给出可操作的提示",
+      "addEventListener(\"error\"" in ui and "换一张" in ui)
 check("手动粘贴 Cookie 入口保留", "手动粘贴 cookie" in ui)
 
 

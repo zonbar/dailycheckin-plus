@@ -44,7 +44,7 @@
 
   /* 扫码登录会话：sid 只在本机内存里，二维码确认后服务端才把 cookie 写进配置。
      mode=add 新增账号，mode=renew 只替换指定账号的 cookie/seed（其它账号不动）。 */
-  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0, channel: "http" };
+  const QR = { sid: null, mode: null, index: null, timer: null, cookie: null, seed: null, applying: false, failStreak: 0, channel: "http", channelNote: "" };
 
   const STATE = {
     valid: ["valid", "有效", "有效"],
@@ -789,8 +789,26 @@
     QR.timer = setTimeout(pollQr, 1500);
   }
 
+  // 浏览器通道早先只回裸 base64，<img src> 会当成相对路径导致弹窗空白。
+  // 后端已统一补 data: 前缀，这里再兜一层，老服务端的响应也能正常显示。
+  function qrSrc(src) {
+    const s = String(src == null ? "" : src).trim();
+    if (!s) return "";
+    if (/^(data:|https?:\/\/|blob:)/i.test(s)) return s;
+    return "data:image/png;base64," + s.replace(/\s+/g, "");
+  }
+
   function paintQr(src, expires, text) {
-    if (src) $("qrImg").innerHTML = `<img src="${esc(src)}" alt="登录二维码">`;
+    const box = $("qrImg");
+    const img = qrSrc(src);
+    if (img) {
+      box.innerHTML = `<img src="${esc(img)}" alt="登录二维码">`;
+      box.querySelector("img").addEventListener("error", () => {
+        box.textContent = "二维码图片加载失败，请点「换一张」";
+      });
+    } else {
+      box.textContent = "二维码准备中…";
+    }
     $("qrStatus").textContent = text;
     if (expires != null && expires > 0) $("qrSub").textContent = `二维码约 ${expires} 秒后过期，过期请点「换一张」`;
   }
@@ -800,7 +818,10 @@
   function paintQrDebug(d) {
     const el = $("qrDebug");
     if (!el) return;
-    if (!d) { el.textContent = ""; return; }
+    const channel = QR.channel === "browser"
+      ? "浏览器通道 · 直接读取登录 Cookie"
+      : (QR.channelNote ? `浏览器通道不可用：${QR.channelNote}；已回退 passport` : "");
+    if (!d) { el.textContent = channel; return; }
     const bits = [
       `status=${d.status ?? "?"}`,
       `code=${d.code ?? "?"}`,
@@ -810,7 +831,7 @@
       `new_sid=${d.new_sid ? "有" : "无"}`,
     ];
     if (d.desc) bits.push(`desc=${d.desc}`);
-    el.textContent = "passport: " + bits.join(" · ");
+    el.textContent = (channel ? channel + " · " : "") + "passport: " + bits.join(" · ");
   }
 
   // 优先走「浏览器扫码」：容器内无头浏览器打开豆包登录弹窗，直接读二维码和 Cookie，
@@ -820,7 +841,7 @@
   async function openQr(key, index) {
     stopQrPoll();
     QR.sid = null; QR.cookie = null; QR.seed = null; QR.applying = false; QR.failStreak = 0;
-    QR.channel = "http";
+    QR.channel = "http"; QR.channelNote = "";
     QR.mode = index == null ? "add" : "renew";
     QR.index = index;
     $("qrTitle").textContent = QR.mode === "renew" ? `续期 · 账号 ${index + 1}` : "扫码登录 · 添加账号";
@@ -841,10 +862,13 @@
       QR.sid = r.id;
       if (r.auth_url) $("qrAuthLink").href = r.auth_url;
       paintQr(r.qrcode, r.expires_in, "等待扫码");
+      paintQrDebug(null);
       $("qrRefresh").disabled = false;
       started = true;
     } catch (e) {
-      // 浏览器通道不可用，自动回退到原来的 passport 扫码
+      // 浏览器通道不可用，自动回退到原来的 passport 扫码；把失败原因留下来，
+      // 免得两条通道都失败时只看到后半段的报错，误以为是豆包官网打不开。
+      QR.channelNote = ((e && e.message) || "启动失败").slice(0, 120);
     }
     if (!started) {
       try {
@@ -853,11 +877,12 @@
         QR.sid = r.id;
         if (r.auth_url) $("qrAuthLink").href = r.auth_url;
         paintQr(r.qrcode, r.expires_in, "等待扫码");
+        paintQrDebug(null);
         $("qrRefresh").disabled = false;
       } catch (e) {
         $("qrStatus").textContent = "获取二维码失败";
-        $("qrSub").textContent = e.message;
-        toast("获取二维码失败：" + e.message);
+        $("qrSub").textContent = `浏览器通道：${QR.channelNote}；passport 接口：${(e && e.message) || "未知错误"}`;
+        toast("获取二维码失败：" + (e && e.message || "未知错误"));
         return;
       }
     }
@@ -881,8 +906,6 @@
       if (r.status === "verify") $("qrAuthLink").textContent = "在浏览器完成安全验证后继续 ↗";
       if (r.mode === "browser") {
         paintQrDebug(null);
-        const el = $("qrDebug");
-        if (el) el.textContent = "浏览器通道 · 直接读取登录 Cookie";
       } else {
         paintQrDebug(r.debug);
       }

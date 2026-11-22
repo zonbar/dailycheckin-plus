@@ -7,6 +7,8 @@
 
 二维码不是 img 标签，而是登录弹窗里 ``[data-testid=qrcode_switcher]`` 的
 CSS background-image（data:image/png;base64,...），直接从 JS 取即可。
+取出来必须补回 ``data:`` 前缀再给前端：只给裸 base64 的话 ``<img src>``
+会当成相对路径，弹窗里就是一片空白（「二维码加载不出来」的直接原因）。
 
 每次登录都用全新 profile + 独立调试端口，账号之间不会串登录态。
 ``--no-sandbox`` / ``--disable-dev-shm-usage`` 是为在 Docker（含 NAS 自带的
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -209,10 +212,24 @@ def _terminate(proc: subprocess.Popen | None, profile: str | Path) -> None:
     shutil.rmtree(str(profile), ignore_errors=True)
 
 
+_PNG_URI = "data:image/png;base64,"
+
 _QR_JS = r"""(()=>{let e=document.querySelector('[data-testid=qrcode_switcher]');
 if(!e)return '';
-let m=getComputedStyle(e).backgroundImage.match(/data:image\/png;base64,([^"')]+)/);
-return m?m[1]:''})()"""
+let m=(getComputedStyle(e).backgroundImage||'').match(/data:image\/png;base64,([^"')]+)/);
+if(m)return m[1];
+let img=e.querySelector('img[src^="data:image/png;base64,"]');
+return img?img.getAttribute('src'):''})()"""
+
+
+def _qr_uri(raw: str) -> str:
+    """把浏览器里取到的二维码统一成 ``<img src>`` 能直接用的 data URI。"""
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if text.startswith("data:") or re.match(r"^https?://", text, re.I):
+        return text
+    return _PNG_URI + "".join(text.split())
 
 _LOGIN_JS = r"""(()=>{let e=[...document.querySelectorAll('button')].find(
  e=>/^登录$|^登陆$/.test((e.textContent||'').trim()));if(e){e.click();return true}return false})()"""
@@ -220,7 +237,7 @@ _LOGIN_JS = r"""(()=>{let e=[...document.querySelectorAll('button')].find(
 
 def _qrcode(cdp: CDP) -> str:
     try:
-        return str(cdp.js(_QR_JS) or "")
+        return _qr_uri(cdp.js(_QR_JS))
     except Exception:  # noqa: BLE001 - 页面导航中取不到，下一轮再试
         return ""
 

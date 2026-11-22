@@ -172,6 +172,8 @@ jobs:
           python3 tools/test_panel_static.py
           echo "--- 定时校验自测：cron 算法、只在失效时通知、同一批失效 24 小时内不重复"
           python3 tools/test_autoverify.py
+          echo "--- 豆包自测：多账号隔离、幂等签到、扫码二维码 data URI、浏览器下载降级"
+          python3 tools/test_doubao.py
           echo "--- UPSTREAM.json 溯源信息"
           python3 -c "import json;s=json.load(open('UPSTREAM.json',encoding='utf-8'));print('上游',s['repo'],'@',s['ref'],s['commit'][:10],'| 引擎版本',s['version'],'| 本地补丁',len(s['patches']),'个 | 站点',len(s['engine_sites']),'个');assert s['commit'] and s['engine_sites'] and s['patches']"
           echo "--- 两个本地补丁的代码特征必须在引擎里"
