@@ -165,13 +165,40 @@ res2 = qoder_claimed.checkin()
 check("Qoder 今日已领不重复请求",
       res2["already"] is True and len(qoder_claimed.session.calls) == 1)
 qoder_stale = Qoder({"token": "tk"})
-qoder_stale.session = Scripted([{"code": 0, "data": {"campaigns": [
-    {"campaignId": "old", "actionType": "CLAIM_BENEFIT", "claimStatus": "CLAIMED",
-     "startAt": yesterday, "benefit": {"amount": 100}},
-]}}])
+qoder_stale.session = Scripted([
+    ({"code": 0, "data": {"campaigns": [
+        {"campaignId": "old", "actionType": "CLAIM_BENEFIT", "claimStatus": "CLAIMED",
+         "startAt": yesterday, "benefit": {"amount": 100}},
+    ]}},),
+    ({"code": 0, "data": {"campaigns": []}},),
+])
 res3 = qoder_stale.checkin()
 check("Qoder 陈旧活动不算今日已签",
       res3.get("pending") is True and res3["already"] is False, str(res3))
+qoder_empty = Qoder({"token": "tk"})
+qoder_empty.session = Scripted([
+    ({"code": 0, "data": {"campaigns": []}},),
+    ({"code": 0, "data": {"campaigns": []}},),
+])
+res4 = qoder_empty.checkin()
+check("Qoder 空活动列表按未查到活动处理，不当成凭证失效",
+      res4.get("pending") is True and res4["already"] is False, str(res4))
+qoder_multi = Qoder({"token": "tk"})
+qoder_multi.session = Scripted([
+    ({"code": 0, "data": {"campaigns": [
+        {"campaignId": "old", "actionType": "CLAIM_BENEFIT", "claimStatus": "CLAIMED",
+         "startAt": yesterday, "benefit": {"amount": 100}},
+    ]}},),
+    ({"code": 0, "data": {"campaigns": [
+        {"campaignId": "c2", "actionType": "CLAIM_BENEFIT", "claimStatus": "CLAIMABLE",
+         "startAt": today, "benefit": {"amount": 100}},
+    ]}},),
+    ({"code": 0, "data": {"status": "CLAIMED", "benefit": {"amount": 100}}},),
+])
+res5 = qoder_multi.checkin()
+check("Qoder 首个 base 只有陈旧活动时会继续探测下一个 base",
+      res5["signed"] is True and res5["credit"] == 100
+      and len(qoder_multi.session.calls) == 3, str(res5))
 
 # --------------------------------------------------------------------------- #
 section("5) MiniMax Code：签到 / 积分 / 自动续期")

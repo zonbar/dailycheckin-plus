@@ -8,6 +8,8 @@
 
 只领取 ``actionType=CLAIM_BENEFIT`` 且 ``claimStatus=CLAIMABLE`` 的活动。
 「今天」按 UTC+8 自然日判断：昨天的已领活动会留在列表里，不能算今日已签。
+国内 / 国际两个 base 都试完，取有可领或今日已领活动的那个；空活动列表是
+合法响应（体验版账号自 2026-11-19 起官方已停发每日积分），不当成凭证失效。
 服务端对真实机器指纹才稳定下发活动，因此账号可显式配置 Cosy-* 指纹字段；
 没配置时按账号派生一组稳定值（可能被风控，签到结果会照实提示）。
 """
@@ -49,6 +51,7 @@ class Qoder(CheckIn):
         self.scope = str(self.check_item.get("scope") or "cn").strip().lower()
         self.timeout = int(self.check_item.get("timeout") or TIMEOUT)
         self.refreshed = False
+        self.active_base = ""
         self.session = requests.Session()
         proxy = str(self.check_item.get("proxy") or "").strip()
         if proxy:
@@ -130,20 +133,27 @@ class Qoder(CheckIn):
         return True
 
     @staticmethod
-    def _campaign_list(data) -> list[dict]:
+    def _campaign_list(data) -> list[dict] | None:
+        """解析活动列表：None = 上游没给出有效列表，[] = 有效但为空。"""
         if not isinstance(data, dict):
-            return []
+            return None
         for obj in (data, data.get("data")):
             if not isinstance(obj, dict):
                 continue
             items = obj.get("campaigns")
             if isinstance(items, list):
                 return [x for x in items if isinstance(x, dict)]
-        return []
+        return None
 
     def _campaigns(self) -> list[dict]:
+        """探测全部 base，取第一个带可领 / 今日已领活动的列表。
+
+        空列表是合法响应（体验版账号官方已停发），不能当成凭证失效；只看到
+        昨天的陈旧活动也要继续试下一个 base，否则会漏掉今天的真实活动。
+        """
         last = ""
-        empty: list[dict] = []
+        campaigns: list[dict] | None = None
+        active = ""
         for base in self._bases():
             status, data = self._request(base, PATH_CAMPAIGNS, token=self.token)
             if status == 401 and self._refresh(base):
@@ -155,14 +165,19 @@ class Qoder(CheckIn):
                 last = f"查询活动失败（HTTP {status}）"
                 continue
             items = self._campaign_list(data)
-            if items:
-                return items
-            empty = items
-        if not last and not empty:
-            last = "未查到可领取的签到活动"
-        if last:
-            raise ValueError(last)
-        return []
+            if items is None:
+                last = "活动接口未返回有效的活动列表"
+                continue
+            if campaigns is None or (not campaigns and items):
+                campaigns, active = items, base
+            claimable, claimed, _ = self._classify(items)
+            if claimable or claimed is not None:
+                campaigns, active = items, base
+                break
+        if campaigns is None:
+            raise ValueError(last or "无法核实签到状态：所有 base 都没有有效响应")
+        self.active_base = active or self._bases()[0]
+        return campaigns
 
     @staticmethod
     def _is_today(campaign: dict) -> bool:
@@ -243,7 +258,7 @@ class Qoder(CheckIn):
                     "signed": False, "already": False, "pending": True,
                     "credit": 0, "state": state,
                 }
-            base = self._bases()[0]
+            base = self.active_base or self._bases()[0]
             got, done, failed = 0.0, 0, []
             for campaign in claimable:
                 cid = str(campaign.get("campaignId") or campaign.get("campaign_id") or "").strip()
@@ -272,7 +287,10 @@ class Qoder(CheckIn):
         if self.refreshed:
             lines.append("凭证状态: 本次已自动续期（请把新的 token / refresh_token 回填到配置）")
         if result.get("pending"):
-            lines.append("今日签到: 还没有下发可领活动，请稍后重试或在客户端确认")
+            lines.append(
+                "今日签到: 面板未查到可领活动，请在该账号的 Qoder 客户端确认"
+                "（体验版 Free 账号官方已停发每日积分）"
+            )
         elif result["already"]:
             lines.append("今日签到: 今日已签到（未重复请求）")
         else:

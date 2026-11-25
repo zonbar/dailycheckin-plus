@@ -170,8 +170,8 @@ cd "$D" && docker compose pull && docker compose up -d
 这四个站点用 token 而不是 Cookie，在配置弹窗里按字段填写即可；手动入口始终保留。
 
 * **Trae**：填客户端登录态里的 `Cloud-IDE-JWT`。设备三件套按账号确定性派生，多账号互不串线；JWT 过期后需回客户端重新获取。
-* **Qoder**：填 `token`（或 `refresh_token`）与账号邮箱。服务端只对真实机器指纹稳定下发活动，若一直提示「没有可领活动」，请从 Qoder 客户端补填 `machine_id` / `machine_token` / `machine_code`。
-* **MiniMax Code**：填 `access_token` 与 `refresh_token`；国际账号把区域改成 `global`。签到是账号级的，不需要客户端在线，1 小时过期的 access token 会自动续期。
+* **Qoder**：填 `token`（或 `refresh_token`）与账号邮箱。体验版（Free）账号自 2026-11-19 起官方已停发每日积分，仅 Pro 试用期 / Lite / Pro / Pro+ / Ultra 个人订阅可领；Pro 账号若一直提示「没有可领活动」，请从 Qoder 客户端补填 `machine_id` / `machine_token` / `machine_code`。
+* **MiniMax Code**：填 `access_token` 与 `refresh_token`；国际账号把区域改成 `global`。官方签到不限 Pro（每日 400 积分，第 4 / 7 天各 1000，30 天有效），账号级签到不需要客户端在线，1 小时过期的 access token 会自动续期。
 * **国际版 Copilot**：填 `copilot.tencent.com` 登录态里的 `access_token`。没有开放签到活动时上游回 `10001`，面板会如实说明，不算凭证失效。
 
 **怎么拿 cookie**：登录目标网站 → `F12` → **Application** → **Cookies** → 选中域名 → 表格里 `Ctrl+A` `Ctrl+C` 复制。或用 [Cookie-Editor](https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) 插件 **Export → JSON** 整块贴进来。

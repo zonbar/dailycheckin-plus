@@ -266,8 +266,10 @@ SITE_META: dict[str, dict] = {
         "required": [],
         "credential": "form",
         "verify": None,
-        "howto": "填 Qoder 的 token / refresh_token。若签到一直提示没有活动，"
-        "请再从 Qoder 客户端填入真实机器指纹（machine_id / machine_token / machine_code）。",
+        "howto": "填 Qoder 的 token / refresh_token。体验版（Free）账号自 2026-11-19 起"
+        "官方已停发每日积分，仅 Pro 试用期 / Lite / Pro / Pro+ / Ultra 个人订阅可领；"
+        "Pro 账号仍提示没有活动时，再从客户端补填真实机器指纹"
+        "（machine_id / machine_token / machine_code）。",
         "fields": [
             {"key": "token", "label": "access token", "type": "secret", "required": True},
             {"key": "refresh_token", "label": "refresh_token", "type": "secret", "default": "",
@@ -290,7 +292,7 @@ SITE_META: dict[str, dict] = {
         "credential": "form",
         "verify": None,
         "howto": "填 MiniMax Code 的 access_token / refresh_token；国际账号把区域改成 global。"
-        "签到是账号级的，不需要客户端在线。",
+        "签到不限 Pro：每日 400 积分，第 4 / 7 天各 1000，30 天有效；不需要客户端在线。",
         "fields": [
             {"key": "access_token", "label": "access_token", "type": "secret", "required": True},
             {"key": "refresh_token", "label": "refresh_token", "type": "secret", "default": "",

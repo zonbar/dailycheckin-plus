@@ -8,7 +8,9 @@
 
 鉴权是 ``Authorization: Bearer <access_token>``。access token 只有约 1 小时，
 账号填了 refresh_token 时，遇到 401 会自动按客户端同款表单 grant 续期。
-签到是账号级的，不需要切号、不需要客户端在线。
+签到是账号级的，不需要切号、不需要客户端在线。官方现行签到不限 Pro：
+每日 400 积分，第 4 / 7 天各 1000，一周约 4000，积分 30 天有效；
+Pro 的差异是活动期内的额度重置卡，不是签到资格。
 """
 
 from __future__ import annotations
