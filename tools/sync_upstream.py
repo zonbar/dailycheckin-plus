@@ -69,7 +69,15 @@ SKIP_NAMES = {"__pycache__", ".DS_Store"}
 LOCAL_SITE_MODULES = {
     "weibo": "微博超话（本项目新增，走 m.weibo.cn 移动端接口）",
     "doubao": "豆包每日签到（本项目新增，走 doubao.com campaign 接口）",
+    "trae": "Trae 签到（本项目新增，走 checkin_credits 接口）",
+    "qoder": "Qoder 签到（本项目新增，走 campaigns 活动接口）",
+    "minimaxcode": "MiniMax Code 签到（本项目新增，走 minimax-cloud 接口）",
+    "globalcopilot": "国际版 Copilot 签到（本项目新增，走 /v2/plugin 接口）",
 }
+
+# 本项目明确不再提供的上游站点。同步时会从上游源码包里同步过来，必须在落地后删掉，
+# 否则用户删掉的模块会在下次同步时「复活」。
+REMOVED_SITE_MODULES = {"acfun", "aolaxing", "baidu"}
 
 
 # --------------------------------------------------------------------------- #
@@ -167,7 +175,10 @@ def upstream_comparable(sites: dict) -> dict:
     report_sites 会把它们判成「上游移除了该站点」——--check 和 --dry-run
     两条路径都会每次误报一遍。统一走这个函数，避免两处逻辑各写一份而跑偏。
     """
-    return {k: v for k, v in sites.items() if k.lower() not in LOCAL_SITE_MODULES}
+    return {
+        k: v for k, v in sites.items()
+        if k.lower() not in LOCAL_SITE_MODULES and k.lower() not in REMOVED_SITE_MODULES
+    }
 
 
 def preserve_local_modules(backup: str) -> list:
@@ -198,6 +209,17 @@ def preserve_local_modules(backup: str) -> list:
                 _chmod(os.path.join(root, entry), 0o644)
         restored.append(name)
     return restored
+
+
+def prune_removed_modules() -> list:
+    """删掉本项目明确不提供的上游站点；返回实际删除的目录名。"""
+    removed = []
+    for name in sorted(REMOVED_SITE_MODULES):
+        path = os.path.join(ENGINE_DIR, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            removed.append(name)
+    return removed
 
 
 def report_local_modules() -> None:
@@ -628,6 +650,9 @@ def do_sync(args) -> int:
         restored = preserve_local_modules(backup)
         if restored:
             log("   已恢复本地站点模块 %d 个：%s" % (len(restored), "、".join(restored)))
+        pruned = prune_removed_modules()
+        if pruned:
+            log("   已移除不再提供的站点模块 %d 个：%s" % (len(pruned), "、".join(pruned)))
 
         step("重放本地补丁")
         try:
@@ -654,11 +679,9 @@ def do_sync(args) -> int:
         step("写入 UPSTREAM.json")
         patches = sorted(n for n in os.listdir(PATCH_DIR) if n.endswith(".patch")) if os.path.isdir(PATCH_DIR) else []
         synced_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        # engine_sites 记录的是「引擎目录里实际存在的站点」，所以要把刚恢复回来的
-        # 本地模块也算进去，否则状态文件会和磁盘对不上（tools/test_sync_upstream.py 会红）
-        engine_sites = sorted(new_sites) + [
-            name.upper() for name in restored if name.upper() not in {k.upper() for k in new_sites}
-        ]
+        # engine_sites 记录的是「引擎目录里实际存在的站点」：本地模块已恢复、
+        # 不提供的站点已删掉，直接按磁盘现状写，状态文件才不会和磁盘对不上。
+        engine_sites = sorted(site_dirs(ENGINE_DIR))
         new_state = {
             "repo": repo,
             "ref": ref,
@@ -670,9 +693,11 @@ def do_sync(args) -> int:
             "patches": patches,
             "engine_sites": sorted(engine_sites),
             "local_site_modules": sorted(LOCAL_SITE_MODULES),
+            "removed_site_modules": sorted(REMOVED_SITE_MODULES),
             "tracked_files": file_info,
             "note": "引擎源码来自上游，patches/ 里的补丁在同步后自动重放。"
-            "local_site_modules 里登记的站点为本项目新增，同步时保留。不要手工覆盖 dailycheckin/。",
+            "local_site_modules 里登记的站点为本项目新增，同步时保留；"
+            "removed_site_modules 里的站点同步后自动删除。不要手工覆盖 dailycheckin/。",
         }
         # 上游没动、补丁也没变的时候，只刷新 synced_at 会白造一次提交
         # （CI 是靠 git diff 判断「有没有变化」的），所以这里沿用上一次的时间戳。

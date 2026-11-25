@@ -62,7 +62,7 @@ setup(
     url="https://sitoi.cn",
     project_urls={"Documentation": "https://sitoi.github.io/dailycheckin/"},
     packages=find_packages(exclude=("config", "panel")),
-    py_modules=["doubao_spec"],
+    py_modules=["doubao_spec", "ide_spec"],
     install_requires=REQUIRED,
     include_package_data=True,
     license="MIT",

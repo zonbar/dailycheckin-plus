@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import auth, autoverify, catalog, cookies as ck, doubao_auth, doubao_browser, paths, runner, schedule, site_browser, store, update, upstream, verify
 
-PANEL_VERSION = "1.0.22"
+PANEL_VERSION = "1.0.23"
 MAX_BODY = 4 * 1024 * 1024
 
 # 不需要登录就能访问的接口：健康检查（给容器 healthcheck 用）与登录/首次设置本身

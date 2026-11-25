@@ -11,21 +11,22 @@
     "0002-notice-single-message.patch"
   ],
   "engine_sites": [
-    "ACFUN",
     "ALIYUN",
-    "AOLAXING",
-    "BAIDU",
     "BAIDUWP",
     "BILIBILI",
     "DOUBAO",
     "ENSHAN",
     "FNNASCLUB",
+    "GLOBALCOPILOT",
     "IMAOTAI",
     "IQIYI",
     "KGQQ",
     "MIMOTION",
+    "MINIMAXCODE",
+    "QODER",
     "SMZDM",
     "TIEBA",
+    "TRAE",
     "V2EX",
     "WEIBO",
     "YOUDAO"
@@ -48,9 +49,18 @@
       "local": "same"
     }
   },
-  "note": "引擎源码来自上游，patches/ 里的补丁在同步后自动重放。local_site_modules 里登记的站点为本项目新增，同步时保留。不要手工覆盖 dailycheckin/。",
+  "note": "引擎源码来自上游，patches/ 里的补丁在同步后自动重放。local_site_modules 里登记的站点为本项目新增，同步时保留；removed_site_modules 里的站点同步后自动删除。不要手工覆盖 dailycheckin/。",
   "local_site_modules": [
-    "weibo",
-    "doubao"
+    "doubao",
+    "globalcopilot",
+    "minimaxcode",
+    "qoder",
+    "trae",
+    "weibo"
+  ],
+  "removed_site_modules": [
+    "acfun",
+    "aolaxing",
+    "baidu"
   ]
 }

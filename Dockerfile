@@ -33,8 +33,9 @@ RUN set -eux; \
 WORKDIR /build
 COPY pyproject.toml setup.py requirements.txt ./
 COPY dailycheckin ./dailycheckin
-# 豆包引擎与面板共用的规格模块：setup.py 把它作为 py_modules 安装进 site-packages。
+# 引擎与面板共用的规格模块：setup.py 把它们作为 py_modules 安装进 site-packages。
 COPY doubao_spec.py ./
+COPY ide_spec.py ./
 RUN set -eux; \
     pip install --no-cache-dir --upgrade pip setuptools wheel; \
     pip install --no-cache-dir -r requirements.txt; \
@@ -46,7 +47,7 @@ RUN set -eux; \
     python -c "import dailycheckin.utils.message as m; assert m.PROJECT_NAME == 'dailycheckin-plus', m.PROJECT_NAME; assert m.NOTICE_TITLE.endswith('每日签到') and m.PROJECT_NAME in m.NOTICE_TITLE, m.NOTICE_TITLE; assert m.PROJECT_URL.endswith('/dailycheckin-plus'), m.PROJECT_URL; print('通知模块自检通过：', m.NOTICE_TITLE, m.PROJECT_URL)"; \
     echo '通知模块修复已生效（恒定一条 + 标题带项目名 + 本项目地址）'; \
     cd / && rm -rf /build; \
-    python -c "import doubao_spec; print('豆包共享规格模块自检通过')"
+    python -c "import doubao_spec, ide_spec; print('共享规格模块自检通过')"
 
 # ---------- 2) 放入网页管理面板（纯标准库实现，不需要安装）----------
 WORKDIR ${DC_HOME}

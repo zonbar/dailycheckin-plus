@@ -176,7 +176,7 @@ def fake_verify_all(auto=False):
         "valid": [{"key": "V2EX", "label": "V2EX", "user": "x", "message": "ok"}],
         "invalid": [],
         "unknown": [{"key": "BILIBILI", "label": "哔哩哔哩", "user": None, "message": "网络不通"}],
-        "skipped": [{"key": "ACFUN", "label": "AcFun", "reason": "无在线接口"}],
+        "skipped": [{"key": "SAMPLE", "label": "示例站点", "reason": "无在线接口"}],
     }
 
 

@@ -277,25 +277,6 @@ def v_baidupan(cookie: str, account: dict) -> dict:
     return unknown(f"百度网盘返回 errno={errno}，无法判定")
 
 
-def v_aolaxing(cookie: str, account: dict) -> dict:
-    try:
-        resp = http(
-            "http://service.100bt.com/creditmall/my/user_info.jsonp",
-            cookie=cookie,
-            headers={"Referer": "http://www.100bt.com/"},
-        )
-    except Exception as exc:  # noqa: BLE001
-        return unknown(f"请求百田接口失败：{exc}")
-    data = _json(resp)
-    if not isinstance(data, dict):
-        return unknown("百田接口返回了非 JSON 内容")
-    result = data.get("jsonResult") or {}
-    inner = result.get("data") if isinstance(result, dict) else None
-    if not isinstance(inner, dict):
-        return bad("百田接口未返回用户信息，登录态已失效")
-    return ok(f"积分 {inner.get('credit')}｜累计 {inner.get('creditHistory')}", user=inner.get("phoneNum"))
-
-
 def _discuz(forum: str, name: str):
     def _verify(cookie: str, account: dict) -> dict:
         try:
@@ -438,7 +419,6 @@ VERIFIERS = {
     "v2ex": v_v2ex,
     "smzdm": v_smzdm,
     "baidupan": v_baidupan,
-    "aolaxing": v_aolaxing,
     "weibo": v_weibo,
     "doubao": v_doubao,
     "enshan": _discuz("https://www.right.com.cn/forum", "恩山论坛"),

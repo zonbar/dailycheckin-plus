@@ -91,8 +91,8 @@ cd "$D" && docker compose pull && docker compose up -d
 
 ## 网页后台
 
-- **站点列表**：16 个站点铺成卡片（一行 4 张，右上角可切列表视图），带官网 LOGO、状态色条与徽章；顶部搜索按站名或 `KEY` 过滤（快捷键 `/`），可按分类筛选、「只看待配置」；排序默认「已配置优先」；窗口变窄自动降密度；跟随系统深浅色。登录过的人再打开**直接进管理界面**，不会先闪一屏登录页。
-- **配置站点**：点卡片开配置窗，里面有「怎么拿 cookie」的说明和账号表单，底栏固定放「＋ 添加账号 / 立即签到 / 保存」。表单类站点（AcFun、阿里云盘这类）字段直接摊开，cookie 类站点的可选参数收在折叠条里。
+- **站点列表**：19 个站点铺成卡片（一行 4 张，右上角可切列表视图），带官网 LOGO、状态色条与徽章；顶部搜索按站名或 `KEY` 过滤（快捷键 `/`），可按分类筛选、「只看待配置」；排序默认「已配置优先」；窗口变窄自动降密度；跟随系统深浅色。登录过的人再打开**直接进管理界面**，不会先闪一屏登录页。
+- **配置站点**：点卡片开配置窗，里面有「怎么拿凭据」的说明和账号表单，底栏固定放「＋ 添加账号 / 立即签到 / 保存」。表单类站点（阿里云盘、Trae 这类）字段直接摊开，cookie 类站点的可选参数收在折叠条里。
 - **cookie 随便粘**：浏览器复制的分号串、没空格的分号串、每行一个字段、DevTools 表格整块、JSON 导出、带 `Cookie:` 前缀的 curl 命令 —— 都认，自动规范化成 `; ` 分隔。
   > 上游引擎几乎每个站点都写死 `cookie.split("; ")`，用 `;` 没空格或换行分隔会**静默解析错**、还不报错，所以面板替你补分隔符。
 - **cookie 有效性**：三级递进 —— 格式体检（粘贴即出，指出缺哪个必填字段）→ 在线校验（请求站点登录态接口，返回昵称 / 等级 / 余额）→ 运行校验（跑真实签到）。结果存档在卡片徽章上并标注依据，**改动 cookie 后旧结论立刻作废**；遇到网络不通老实报「无法判定」，绝不误报失效。
@@ -125,7 +125,7 @@ cd "$D" && docker compose pull && docker compose up -d
 
 ## 支持的站点
 
-清单从引擎里**自动发现** —— 上游加了新站，刷新面板就会出现，不用改代码。当前 18 个：
+清单从引擎里**自动发现** —— 引擎里加了新站，刷新面板就会出现，不用改代码。当前 19 个：
 
 | 站点 | KEY | 凭据（必填） |
 |---|---|---|
@@ -136,7 +136,6 @@ cd "$D" && docker compose pull && docker compose up -d
 | 有道云笔记 | `YOUDAO` | Cookie `YNOTE_PERS` |
 | V2EX | `V2EX` | Cookie `A2` |
 | 什么值得买 | `SMZDM` | 建议整块复制 |
-| 奥拉星 | `AOLAXING` | Cookie `BT_LOGIN_tt_common` |
 | 恩山无线论坛 | `ENSHAN` | Cookie `TWcq_2132_auth` |
 | 飞牛 NAS 论坛 | `FNNASCLUB` | Cookie `pvRK_2132_auth` |
 | 全民 K 歌 | `KGQQ` | Cookie `uid`、`openid`、`openkey` |
@@ -144,9 +143,11 @@ cd "$D" && docker compose pull && docker compose up -d
 | 豆包 | `DOUBAO` | 扫码授权或 Cookie `sessionid`（本项目新增，见下） |
 | 阿里云盘 | `ALIYUN` | refresh_token |
 | i 茅台 | `IMAOTAI` | `token`、`userid`、`mobile` 等 |
-| AcFun | `ACFUN` | 账号密码 |
 | 小米运动 | `MIMOTION` | 账号密码 |
-| 百度站点提交 | `BAIDU` | 表单 |
+| Trae | `TRAE` | `jwt`（Cloud-IDE-JWT） |
+| Qoder | `QODER` | `token` / `refresh_token`，可选真实机器指纹 |
+| MiniMax Code | `MINIMAXCODE` | `access_token` / `refresh_token` |
+| WorkBuddy 国际版 | `GLOBALCOPILOT` | `access_token`（可选 `refresh_token`） |
 
 新站**开箱可用**（能配、能存、能签到），只是精细度降一档：不拦必填字段、没有在线校验、LOGO 退回图标。想补全，照 `panel/catalog.py` 里已有写法加一段元数据即可。
 
@@ -163,6 +164,15 @@ cd "$D" && docker compose pull && docker compose up -d
 * **必须先在微博里关注对应超话**，否则拉不到列表、签不了（面板会明确提示「没关注该超话」）。
 * 微博对机房 IP 风控较严，返回 HTTP 432 时可在站点设置里填代理地址。
 * 触发风控需要人工验证时，运行结果里会给出验证链接，点完再跑一次即可。
+
+### AI 编辑器签到（`TRAE` / `QODER` / `MINIMAXCODE` / `GLOBALCOPILOT`）
+
+这四个站点用 token 而不是 Cookie，在配置弹窗里按字段填写即可；手动入口始终保留。
+
+* **Trae**：填客户端登录态里的 `Cloud-IDE-JWT`。设备三件套按账号确定性派生，多账号互不串线；JWT 过期后需回客户端重新获取。
+* **Qoder**：填 `token`（或 `refresh_token`）与账号邮箱。服务端只对真实机器指纹稳定下发活动，若一直提示「没有可领活动」，请从 Qoder 客户端补填 `machine_id` / `machine_token` / `machine_code`。
+* **MiniMax Code**：填 `access_token` 与 `refresh_token`；国际账号把区域改成 `global`。签到是账号级的，不需要客户端在线，1 小时过期的 access token 会自动续期。
+* **国际版 Copilot**：填 `copilot.tencent.com` 登录态里的 `access_token`。没有开放签到活动时上游回 `10001`，面板会如实说明，不算凭证失效。
 
 **怎么拿 cookie**：登录目标网站 → `F12` → **Application** → **Cookies** → 选中域名 → 表格里 `Ctrl+A` `Ctrl+C` 复制。或用 [Cookie-Editor](https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) 插件 **Export → JSON** 整块贴进来。
 cookie 等于账号密码，**别外发** —— 它只存在你本机的 `config/config.json`，不会上传到任何地方。

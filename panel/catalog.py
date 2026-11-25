@@ -96,15 +96,6 @@ SITE_META: dict[str, dict] = {
         "verify": "baidupan",
         "howto": "登录 pan.baidu.com → F12 → Application → Cookies，至少 BDUSS + STOKEN",
     },
-    "AOLAXING": {
-        "label": "奥拉星",
-        "emoji": "🐉",
-        "group": "游戏",
-        "required": ["BT_LOGIN_tt_common"],
-        "recommended": ["BT_AUTO_tt_common"],
-        "verify": "aolaxing",
-        "howto": "登录 www.100bt.com → F12 → Application → Cookies，BT_LOGIN_tt_common 是登录标记",
-    },
     "ENSHAN": {
         "label": "恩山无线论坛",
         "emoji": "📡",
@@ -167,19 +158,6 @@ SITE_META: dict[str, dict] = {
             {"key": "reserve_rule", "label": "预约规则", "type": "int", "default": 0},
         ],
     },
-    "ACFUN": {
-        "label": "AcFun",
-        "emoji": "🎯",
-        "group": "视频",
-        "required": [],
-        "credential": "form",
-        "verify": None,
-        "howto": "AcFun 使用的是账号密码登录，没有 cookie",
-        "fields": [
-            {"key": "phone", "label": "手机号", "type": "str", "required": True},
-            {"key": "password", "label": "密码", "type": "secret", "required": True},
-        ],
-    },
     "MIMOTION": {
         "label": "小米运动",
         "emoji": "👟",
@@ -193,20 +171,6 @@ SITE_META: dict[str, dict] = {
             {"key": "password", "label": "密码", "type": "secret", "required": True},
             {"key": "min_step", "label": "最小步数", "type": "int", "default": 10000},
             {"key": "max_step", "label": "最大步数", "type": "int", "default": 19999},
-        ],
-    },
-    "BAIDU": {
-        "label": "百度站点提交",
-        "emoji": "🔎",
-        "group": "工具",
-        "required": [],
-        "credential": "form",
-        "verify": None,
-        "howto": "提交 sitemap 到百度搜索资源平台，不需要 cookie",
-        "fields": [
-            {"key": "data_url", "label": "URL 列表地址", "type": "str", "required": True},
-            {"key": "submit_url", "label": "提交接口", "type": "secret", "required": True},
-            {"key": "times", "label": "提交条数", "type": "int", "default": 100},
         ],
     },
     "WEIBO": {
@@ -271,6 +235,93 @@ SITE_META: dict[str, dict] = {
             },
         ],
     },
+    "TRAE": {
+        "label": "Trae",
+        "emoji": "🧩",
+        "group": "AI",
+        "required": [],
+        "credential": "form",
+        "verify": None,
+        "howto": "从 Trae 客户端登录态里复制 Cloud-IDE-JWT（可带或可不带前缀），粘到下面 jwt 字段。"
+        "面板按账号派生设备号，多账号不会串线；JWT 过期需回客户端重新获取。",
+        "fields": [
+            {"key": "jwt", "label": "Cloud-IDE-JWT", "type": "secret", "required": True,
+             "help": "Trae 客户端登录态中的 access token"},
+            {"key": "user_id", "label": "用户 ID", "type": "str", "default": "",
+             "help": "可选；留空会从 JWT 里自动解析"},
+            {"key": "device_id", "label": "device_id", "type": "str", "default": "",
+             "help": "可选；留空按账号派生，多账号互不串线"},
+            {"key": "session_id", "label": "session_id", "type": "secret", "default": "",
+             "help": "可选；一般留空"},
+            {"key": "market_user_id", "label": "market_user_id", "type": "secret", "default": "",
+             "help": "可选；一般留空"},
+            {"key": "proxy", "label": "代理地址", "type": "str", "default": "",
+             "help": "可选。例：http://127.0.0.1:1080；留空则不使用系统代理"},
+        ],
+    },
+    "QODER": {
+        "label": "Qoder",
+        "emoji": "🧭",
+        "group": "AI",
+        "required": [],
+        "credential": "form",
+        "verify": None,
+        "howto": "填 Qoder 的 token / refresh_token。若签到一直提示没有活动，"
+        "请再从 Qoder 客户端填入真实机器指纹（machine_id / machine_token / machine_code）。",
+        "fields": [
+            {"key": "token", "label": "access token", "type": "secret", "required": True},
+            {"key": "refresh_token", "label": "refresh_token", "type": "secret", "default": "",
+             "help": "可选；token 失效时自动续期"},
+            {"key": "email", "label": "账号邮箱", "type": "str", "default": ""},
+            {"key": "scope", "label": "区域", "type": "str", "default": "cn",
+             "help": "cn = 国内（默认），global = 国际版；两个 base 都会自动探测"},
+            {"key": "machine_id", "label": "machine_id", "type": "str", "default": ""},
+            {"key": "machine_token", "label": "machine_token", "type": "secret", "default": ""},
+            {"key": "machine_code", "label": "machine_code", "type": "secret", "default": ""},
+            {"key": "proxy", "label": "代理地址", "type": "str", "default": "",
+             "help": "可选。例：http://127.0.0.1:1080"},
+        ],
+    },
+    "MINIMAXCODE": {
+        "label": "MiniMax Code",
+        "emoji": "⚡",
+        "group": "AI",
+        "required": [],
+        "credential": "form",
+        "verify": None,
+        "howto": "填 MiniMax Code 的 access_token / refresh_token；国际账号把区域改成 global。"
+        "签到是账号级的，不需要客户端在线。",
+        "fields": [
+            {"key": "access_token", "label": "access_token", "type": "secret", "required": True},
+            {"key": "refresh_token", "label": "refresh_token", "type": "secret", "default": "",
+             "help": "可选；access token 约 1 小时过期，填了才能自动续期"},
+            {"key": "region", "label": "区域", "type": "str", "default": "cn",
+             "help": "cn = 国内（默认），global = 国际版"},
+            {"key": "timezone", "label": "结算时区", "type": "str", "default": "Asia/Shanghai",
+             "help": "签到奖励按该时区结算"},
+            {"key": "proxy", "label": "代理地址", "type": "str", "default": "",
+             "help": "可选。例：http://127.0.0.1:1080"},
+        ],
+    },
+    "GLOBALCOPILOT": {
+        "label": "WorkBuddy 国际版",
+        "emoji": "🌍",
+        "group": "AI",
+        "required": [],
+        "credential": "form",
+        "verify": None,
+        "howto": "填国际版 Copilot（copilot.tencent.com）登录态里的 access_token；"
+        "refresh_token / domain 可选。上游没有开放签到活动时会返回 10001，面板会如实提示。",
+        "fields": [
+            {"key": "access_token", "label": "access_token", "type": "secret", "required": True},
+            {"key": "refresh_token", "label": "refresh_token", "type": "secret", "default": ""},
+            {"key": "domain", "label": "domain", "type": "str", "default": ""},
+            {"key": "endpoint", "label": "服务端点", "type": "str", "default": "https://copilot.tencent.com",
+             "help": "一般不用改；国际备用端点为 https://wb.tencentbuddy.com"},
+            {"key": "proxy", "label": "代理地址", "type": "str", "default": "",
+             "help": "可选。例：http://127.0.0.1:1080"},
+        ],
+    },
 }
 
 DEFAULT_META = {
@@ -307,15 +358,12 @@ SITE_LINKS: dict[str, dict[str, str]] = {
     # pan.baidu.com/favicon.ico 是 404，之前用的 www.baidu.com/favicon.ico 是百度通用熊掌；
     # 这里改用百度网盘官方 App 图标，随面板一起打包。
     "BAIDUWP": {"site": "https://pan.baidu.com/", "logo": "/static/icons/baiduwp.png"},
-    "AOLAXING": {"site": "https://www.100bt.com/", "logo": "https://www.100bt.com/favicon.ico"},
     "ENSHAN": {"site": "https://www.right.com.cn/forum/", "logo": "https://www.right.com.cn/forum/favicon.ico"},
     "FNNASCLUB": {"site": "https://club.fnnas.com/", "logo": "https://club.fnnas.com/favicon.ico"},
     "KGQQ": {"site": "https://kg.qq.com/", "logo": "https://kg.qq.com/favicon.ico"},
     "ALIYUN": {"site": "https://www.alipan.com/", "logo": "https://www.alipan.com/favicon.ico"},
     "IMAOTAI": {"site": "https://www.moutai519.com.cn/", "logo": "https://www.moutai519.com.cn/favicon.ico"},
-    "ACFUN": {"site": "https://www.acfun.cn/", "logo": "https://www.acfun.cn/favicon.ico"},
     "MIMOTION": {"site": "https://www.mi.com/", "logo": "https://www.mi.com/favicon.ico"},
-    "BAIDU": {"site": "https://ziyuan.baidu.com/", "logo": "https://ziyuan.baidu.com/favicon.ico"},
     "WEIBO": {"site": "https://m.weibo.cn/", "logo": "https://weibo.com/favicon.ico"},
     # 官网 /favicon.ico 现在返回 HTML；真实图标在 https://www.doubao.com/ 的 head 里
     # 声明为 lf-flow-web-cdn.doubao.com 上的 new-doubao PNG。
@@ -323,6 +371,10 @@ SITE_LINKS: dict[str, dict[str, str]] = {
         "site": "https://www.doubao.com/",
         "logo": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/64x64.png",
     },
+    "TRAE": {"site": "https://www.trae.cn/", "logo": "https://www.trae.cn/favicon.ico"},
+    "QODER": {"site": "https://qoder.com/", "logo": "https://qoder.com/favicon.ico"},
+    "MINIMAXCODE": {"site": "https://www.minimaxi.com/", "logo": "https://www.minimaxi.com/favicon.ico"},
+    "GLOBALCOPILOT": {"site": "https://copilot.tencent.com/", "logo": "https://copilot.tencent.com/favicon.ico"},
 }
 
 
