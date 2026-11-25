@@ -12,6 +12,8 @@
 没配置时按账号派生一组稳定值（可能被风控，签到结果会照实提示）。
 """
 
+from __future__ import annotations
+
 import json
 import os
 import time

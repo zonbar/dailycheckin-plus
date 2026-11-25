@@ -12,6 +12,8 @@
 如实说明，不当成凭证失效。
 """
 
+from __future__ import annotations
+
 import json
 import os
 

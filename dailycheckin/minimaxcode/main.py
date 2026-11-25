@@ -11,6 +11,8 @@
 签到是账号级的，不需要切号、不需要客户端在线。
 """
 
+from __future__ import annotations
+
 import json
 import os
 
